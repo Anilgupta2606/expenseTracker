@@ -17,11 +17,9 @@ function byCategory(txns: Txn[]): { category: string; total: number; count: numb
   return [...m.entries()].map(([category, v]) => ({ category, ...v })).sort((a, b) => b.total - a.total);
 }
 
-/** Months that have transactions or a plan you entered for that month. Newest first. */
+/** Months that have transactions (statement or added by hand). Newest first. */
 export function availableMonths(): string[] {
-  const { txns, plans } = app.state;
-  const months = [...new Set([...txns.map((t) => t.date.slice(0, 7)), ...Object.keys(plans)])].sort().reverse();
-  return months.length ? months : [currentMonth()];
+  return [...new Set(app.state.txns.map((t) => t.date.slice(0, 7)))].sort().reverse();
 }
 
 function accountSelect(): string {
@@ -195,7 +193,7 @@ let monthDefaulted = false;
 
 export function renderDashboard(root: HTMLElement) {
   const { state, filters } = app;
-  if (!state.txns.length && !Object.keys(state.plans).length) {
+  if (!state.txns.length) {
     root.innerHTML = `<div class="page-head"><div><h1>Overview</h1><p class="page-sub">Nothing here yet</p></div>
         <button class="btn primary" data-add>+ Add transaction</button></div>
       <section class="panel">
@@ -217,7 +215,7 @@ export function renderDashboard(root: HTMLElement) {
 
   const months = availableMonths();
   if (!monthDefaulted || filters.month === 'all' || !months.includes(filters.month)) {
-    filters.month = months.find((m) => state.txns.some((t) => t.date.startsWith(m))) ?? months[0];
+    filters.month = months[0];
     monthDefaulted = true;
   }
   const month = filters.month;

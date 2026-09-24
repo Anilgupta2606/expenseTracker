@@ -81,6 +81,12 @@ export interface StatementImport {
   from: string; // YYYY-MM-DD
   to: string;
   importedAt: number;
+  /** Rows found in the file and how many broke the running balance. */
+  rows?: number;
+  balanceMismatches?: number;
+  /** The original file is kept on this device for rescans. */
+  hasFile?: boolean;
+  rescannedAt?: number;
 }
 
 export interface AppState {

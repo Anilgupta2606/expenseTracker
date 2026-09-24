@@ -19,6 +19,7 @@ export function openPlanSheet(month: string) {
     ${field('p-invest', 'Expected investment', plan.expectedInvestment, 'SIPs, stocks, gold, FDs, PPF/NPS…')}
     <p class="small" id="p-left"></p>
     <div class="row">
+      ${own ? '<button class="btn danger" id="p-clear">Clear</button>' : ''}
       <button class="btn grow" id="p-cancel">Cancel</button>
       <button class="btn primary grow" id="p-save">Save</button>
     </div>
@@ -39,6 +40,15 @@ export function openPlanSheet(month: string) {
   const close = () => backdrop.remove();
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   backdrop.querySelector('#p-cancel')!.addEventListener('click', close);
+  backdrop.querySelector('#p-clear')?.addEventListener('click', async () => {
+    close();
+    await update((s) => {
+      const plans = { ...s.plans };
+      delete plans[month];
+      return { ...s, plans };
+    });
+    toast(`Plan cleared for ${monthLabel(month)}`);
+  });
   backdrop.querySelector('#p-save')!.addEventListener('click', async () => {
     const next = { income: num('p-income'), expectedSpend: num('p-spend'), expectedInvestment: num('p-invest') };
     close();

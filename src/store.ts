@@ -81,3 +81,39 @@ export function migrate(value: Partial<AppState>): AppState {
   }
   return state;
 }
+
+/** Original statement files, kept so a statement can be rescanned later. */
+export interface StoredFile { name: string; type: string; data: ArrayBuffer }
+
+async function fileOp<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRequest): Promise<T> {
+  const db = await open();
+  return new Promise<T>((resolve, reject) => {
+    const req = fn(db.transaction(STORE, mode).objectStore(STORE));
+    req.onsuccess = () => resolve(req.result as T);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function saveFile(importId: string, file: StoredFile): Promise<void> {
+  try {
+    await fileOp('readwrite', (s) => s.put(file, `file:${importId}`));
+  } catch {
+    // Storage full or unavailable: rescans will ask for the file instead.
+  }
+}
+
+export async function loadFile(importId: string): Promise<StoredFile | undefined> {
+  try {
+    return await fileOp<StoredFile | undefined>('readonly', (s) => s.get(`file:${importId}`));
+  } catch {
+    return undefined;
+  }
+}
+
+export async function deleteFile(importId: string): Promise<void> {
+  try {
+    await fileOp('readwrite', (s) => s.delete(`file:${importId}`));
+  } catch {
+    // Nothing to clean up.
+  }
+}
