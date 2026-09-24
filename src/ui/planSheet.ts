@@ -15,7 +15,7 @@ export function openPlanSheet(month: string) {
     <h2>Plan for ${esc(monthLabel(month))}</h2>
     <p class="small muted" style="margin-top:-4px">${set && !own ? 'Carried forward from an earlier month. ' : ''}Saving here applies to ${esc(monthLabel(month))} and carries forward to new months until you change it. Earlier months keep their own numbers.</p>
     ${field('p-income', 'Income', plan.income, 'Your take-home money for the month')}
-    ${field('p-spend', 'Expected spend', plan.expectedSpend, 'Everything except investments, self transfers and card bill payments')}
+    ${field('p-spend', 'Expected spend', plan.expectedSpend, 'Everything except investments and self transfers (card bill payments are included)')}
     ${field('p-invest', 'Expected investment', plan.expectedInvestment, 'SIPs, stocks, gold, FDs, PPF/NPS…')}
     <p class="small" id="p-left"></p>
     <div class="row">

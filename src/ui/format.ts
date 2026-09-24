@@ -36,7 +36,7 @@ export function applyFilters(txns: Txn[], f: Filters, opts: { kind?: boolean } =
   return txns.filter((t) =>
     (f.month === 'all' || t.date.startsWith(f.month)) &&
     (f.account === 'all' || t.accountId === f.account) &&
-    (!opts.kind || f.kind === 'all' || (f.kind === 'review' ? t.category === 'Uncategorised' : t.kind === f.kind)) &&
+    (!opts.kind || f.kind === 'all' || (f.kind === 'review' ? t.category === 'Uncategorised' : f.kind === 'excluded' ? Boolean(t.excluded) : t.kind === f.kind)) &&
     (!opts.kind || !f.category || t.category === f.category) &&
     (!q || t.description.toLowerCase().includes(q) || t.merchantName.toLowerCase().includes(q) || t.category.toLowerCase().includes(q) || String(t.amount).includes(q)),
   );

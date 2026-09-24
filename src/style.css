@@ -333,3 +333,5 @@ table.simple a { color: inherit; }
 .upload-row .name { font-weight: 550; }
 .upload-row .meta { font-size: 12px; color: var(--text-3); }
 .upload-actions { display: grid; gap: 6px; flex: none; }
+.count-box { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+.count-box input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }

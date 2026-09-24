@@ -64,6 +64,10 @@ export function migrate(value: Partial<AppState>): AppState {
   const state: AppState = { ...base, ...value, settings: { ...base.settings, ...settings } } as AppState;
   state.plans ??= {};
   state.imports ??= [];
+  // "Not counted" used to be a type; it is now the Counted checkbox.
+  state.txns = state.txns.map((t) => (t.kind === 'ignore'
+    ? { ...t, kind: t.direction === 'credit' ? 'income' : 'spend', category: 'Uncategorised', excluded: true } : t));
+  state.rules = state.rules.map((r) => (r.kind === 'ignore' ? { ...r, kind: 'spend', category: 'Uncategorised', excluded: true } : r));
   // Older data has no upload records: rebuild one per account and upload time.
   const missing = state.txns.filter((t) => !t.importId);
   if (missing.length) {

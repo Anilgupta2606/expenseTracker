@@ -6,7 +6,10 @@ import { openEditSheet } from './edit';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { applyFilters, dayLabel, esc, initials, inrFull, kindVar } from './format';
 
-const KIND_CHIPS: (Kind | 'all' | 'review')[] = ['all', 'review', 'spend', 'income', 'investment', 'transfer', 'cc_bill', 'ignore'];
+const KIND_CHIPS: (Kind | 'all' | 'review' | 'excluded')[] = ['all', 'review', 'spend', 'investment', 'cc_bill', 'income', 'transfer', 'excluded'];
+
+/** Types that feed the spending and investment totals, so the Counted box matters. */
+const COUNTABLE = new Set<Kind>(['spend', 'investment', 'cc_bill']);
 
 /** Choices for "Counts as", in the order people think about them. */
 const COUNTS_AS: { kind: Kind; label: string }[] = [
@@ -15,8 +18,23 @@ const COUNTS_AS: { kind: Kind; label: string }[] = [
   { kind: 'income', label: 'Income' },
   { kind: 'transfer', label: 'Self transfer' },
   { kind: 'cc_bill', label: 'Card bill' },
-  { kind: 'ignore', label: 'Not counted' },
 ];
+
+/** Ticks or unticks "Counted", then offers to do the same for similar payments. */
+async function setCounted(id: string, counted: boolean) {
+  const t = app.state.txns.find((x) => x.id === id);
+  if (!t) return;
+  await update((s) => ({ ...s, txns: s.txns.map((x) => (x.id === id ? { ...x, excluded: !counted } : x)) }));
+  const similar = app.state.txns.filter((x) => x.id !== id && x.merchantKey === t.merchantKey && x.direction === t.direction && Boolean(x.excluded) === counted);
+  toast(counted ? `${t.merchantName} is counted again.` : `${t.merchantName} is no longer counted.`, similar.length ? {
+    label: `Same for ${similar.length} similar`,
+    run: async () => {
+      const ids = new Set(similar.map((x) => x.id));
+      await update((s) => ({ ...s, txns: s.txns.map((x) => (ids.has(x.id) ? { ...x, excluded: !counted } : x)) }));
+      toast(`Updated ${similar.length} more`);
+    },
+  } : undefined);
+}
 
 /** Moves one transaction (and optionally similar ones) to another type. */
 async function setKind(id: string, kind: Kind) {
@@ -28,7 +46,7 @@ async function setKind(id: string, kind: Kind) {
   }));
   const similar = app.state.txns.filter((x) => x.id !== id && x.merchantKey === t.merchantKey && x.direction === t.direction && x.kind !== kind && x.source !== 'manual');
   const label = COUNTS_AS.find((c) => c.kind === kind)!.label;
-  toast(kind === 'ignore' ? `${t.merchantName} is no longer counted.` : `${t.merchantName} now counts as ${label}.`, {
+  toast(`${t.merchantName} now counts as ${label}.`, {
     label: similar.length ? `Apply to ${similar.length} similar & remember` : 'Remember for this payee',
     run: async () => {
       const direction = kind === 'spend' || kind === 'income' ? t.direction : undefined;
@@ -49,7 +67,7 @@ async function setKind(id: string, kind: Kind) {
 export function txnRow(t: Txn): string {
   const account = app.state.accounts.find((a) => a.id === t.accountId);
   const review = t.category === 'Uncategorised';
-  return `<div class="txn${t.kind === 'ignore' ? ' ignored' : ''}" data-id="${esc(t.id)}" role="button" tabindex="0">
+  return `<div class="txn${t.excluded ? ' ignored' : ''}" data-id="${esc(t.id)}" role="button" tabindex="0">
     <span class="avatar" style="background:${kindVar(t.kind)}">${esc(initials(t.merchantName))}</span>
     <span class="grow">
       <div class="name ellipsis">${esc(t.merchantName)}</div>
@@ -60,9 +78,12 @@ export function txnRow(t: Txn): string {
     </span>
     <span class="txn-side">
       <span class="num amt ${t.direction}">${t.direction === 'credit' ? '+' : '−'}${inrFull(t.amount)}</span>
-      <select class="counts-as" data-counts="${esc(t.id)}" aria-label="Counts as" title="Counts as">
-        ${COUNTS_AS.map((c) => `<option value="${c.kind}" ${c.kind === t.kind ? 'selected' : ''}>${c.label}</option>`).join('')}
-      </select>
+      <span class="row" style="gap:6px">
+        ${COUNTABLE.has(t.kind) ? `<label class="count-box" title="Include in totals"><input type="checkbox" data-counted="${esc(t.id)}" ${t.excluded ? '' : 'checked'}> Counted</label>` : ''}
+        <select class="counts-as" data-counts="${esc(t.id)}" aria-label="Counts as" title="Counts as">
+          ${COUNTS_AS.map((c) => `<option value="${c.kind}" ${c.kind === t.kind ? 'selected' : ''}>${c.label}</option>`).join('')}
+        </select>
+      </span>
     </span>
   </div>`;
 }
@@ -84,11 +105,11 @@ export function renderTransactions(root: HTMLElement) {
   const inn = txns.filter((t) => t.direction === 'credit').reduce((a, t) => a + t.amount, 0);
 
   root.innerHTML = `
-    <div class="page-head"><div><h1>Transactions</h1><p class="page-sub">Use “Counts as” to move a row between spending, investment and others. Tap a row for its category.</p></div><button class="btn primary" data-add>+ Add transaction</button></div>
+    <div class="page-head"><div><h1>Transactions</h1><p class="page-sub">“Counts as” sets the type; untick “Counted” to leave a row out of totals. Tap a row for its category.</p></div><button class="btn primary" data-add>+ Add transaction</button></div>
     ${filterBar()}
     <input type="search" placeholder="Search name, category or amount" value="${esc(filters.search)}" id="search" style="margin-bottom:10px">
     <div class="chips">
-      ${KIND_CHIPS.map((k) => `<button class="chip${filters.kind === k && !filters.category ? ' on' : ''}" data-kind="${k}">${k === 'all' ? 'All' : k === 'review' ? 'Needs review' : esc(KIND_LABEL[k])}</button>`).join('')}
+      ${KIND_CHIPS.map((k) => `<button class="chip${filters.kind === k && !filters.category ? ' on' : ''}" data-kind="${k}">${k === 'all' ? 'All' : k === 'review' ? 'Needs review' : k === 'excluded' ? 'Not counted' : esc(KIND_LABEL[k])}</button>`).join('')}
       ${filters.category ? `<button class="chip on" data-kind="${filters.kind}" data-clear-cat>${esc(filters.category)} ✕</button>` : ''}
     </div>
     <div class="row between small muted wrap" style="margin:0 4px 4px">
@@ -139,8 +160,12 @@ export function bindTxnRows(root: HTMLElement) {
       const t = app.state.txns.find((x) => x.id === el.dataset.id);
       if (t) (t.accountId === MANUAL_ACCOUNT ? openManualSheet(t) : openEditSheet(t));
     };
-    el.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('.counts-as')) open(); });
+    el.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('.counts-as, .count-box')) open(); });
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === el) open(); });
+  });
+  root.querySelectorAll<HTMLInputElement>('input[data-counted]').forEach((box) => {
+    box.addEventListener('click', (e) => e.stopPropagation());
+    box.addEventListener('change', () => void setCounted(box.dataset.counted!, box.checked));
   });
   root.querySelectorAll<HTMLSelectElement>('select[data-counts]').forEach((sel) => {
     sel.addEventListener('click', (e) => e.stopPropagation());
