@@ -1,5 +1,5 @@
 import type { Kind } from '../types';
-import { KIND_LABEL } from '../categorize/categories';
+import { defaultCategory, KIND_LABEL } from '../categorize/categories';
 import { buildPreview, commitPreview, deleteImport, parseFile, recategorizeAll, type ImportPreview } from '../importer';
 import { PasswordNeededError } from '../parse/errors';
 import { requestPersistence } from '../store';
@@ -133,6 +133,18 @@ export function renderImport(root: HTMLElement) {
     busy = false;
     render();
   });
+  // Change the type of a row before saving the statement.
+  root.querySelectorAll<HTMLSelectElement>('select[data-counts]').forEach((sel) => sel.addEventListener('change', () => {
+    for (const p of pending) {
+      const t = p.preview?.fresh.find((x) => x.id === sel.dataset.counts);
+      if (t) {
+        t.kind = sel.value as Kind;
+        t.category = defaultCategory(t.kind, t.category);
+        t.source = 'manual';
+      }
+    }
+    render();
+  }));
   root.querySelectorAll<HTMLElement>('[data-remove]').forEach((b) => b.addEventListener('click', () => {
     pending.splice(Number(b.dataset.remove), 1);
     render();
@@ -154,6 +166,12 @@ export function renderImport(root: HTMLElement) {
         if (!p.preview) continue;
         // Rebuild against the latest state so files in one batch pair with each other.
         const pv = buildPreview(p.preview.result, next, p.file.name);
+        // Keep the types you changed in the preview.
+        const overrides = new Map(p.preview.fresh.filter((t) => t.source === 'manual').map((t) => [t.id, t]));
+        pv.fresh = pv.fresh.map((t) => {
+          const o = overrides.get(t.id);
+          return o ? { ...t, kind: o.kind, category: o.category, source: 'manual' as const } : t;
+        });
         added += pv.fresh.length;
         next = commitPreview(next, pv);
         const holder = pv.account.holderName;

@@ -1,4 +1,4 @@
-export type Kind = 'spend' | 'income' | 'investment' | 'transfer' | 'cc_bill';
+export type Kind = 'spend' | 'income' | 'investment' | 'transfer' | 'cc_bill' | 'ignore';
 export type Direction = 'debit' | 'credit';
 
 /** Where a transaction's category came from, strongest last. */
