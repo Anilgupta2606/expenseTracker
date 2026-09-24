@@ -125,7 +125,7 @@ function budgetPanel(s: MonthSummary): string {
 }
 
 function glancePanel(s: MonthSummary, txns: Txn[], prev: MonthSummary | undefined, cats: { category: string; total: number }[]): string {
-  const spendTxns = txns.filter((t) => t.kind === 'spend' && t.direction === 'debit');
+  const spendTxns = txns.filter((t) => (t.kind === 'spend' || t.kind === 'cc_bill') && t.direction === 'debit' && !t.excluded);
   const biggest = [...spendTxns].sort((a, b) => b.amount - a.amount)[0];
   const manual = txns.filter((t) => t.accountId === MANUAL_ACCOUNT).length;
   const days = new Set(spendTxns.map((t) => t.date)).size;
@@ -230,9 +230,10 @@ export function renderDashboard(root: HTMLElement) {
   const s = summarize(state, month, scoped);
   const prev = older ? summarize(state, older, scoped) : undefined;
   const txns = scoped.filter((t) => t.date.startsWith(month));
-  const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir);
+  const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir && !t.excluded);
   const review = txns.filter((t) => t.category === 'Uncategorised');
-  const spendCats = byCategory(of('spend', 'debit'));
+  // Card bill payments count as spending; they appear as their own category.
+  const spendCats = byCategory([...of('spend', 'debit'), ...of('cc_bill', 'debit')]);
   const invCats = byCategory([...of('investment', 'debit'), ...of('investment', 'credit')]
     .map((t) => ({ ...t, amount: t.direction === 'debit' ? t.amount : -t.amount })));
   const points = (pick: (r: MonthSummary) => [number, number]): MonthPoint[] =>
@@ -241,7 +242,7 @@ export function renderDashboard(root: HTMLElement) {
 
   const movements = [
     { kind: 'transfer' as Kind, label: 'Self transfers', value: s.actual.transfers, note: 'Between your own accounts' },
-    { kind: 'cc_bill' as Kind, label: 'Credit card bills', value: s.actual.cardBills, note: 'Card payments, not new spending' },
+    { kind: 'ignore' as Kind, label: 'Not counted by you', value: s.actual.excluded, note: 'Rows with Counted unticked', filter: 'excluded' },
     { kind: 'investment' as Kind, label: 'Redeemed investments', value: s.actual.redeemed, note: 'Money back from investments' },
     { kind: 'income' as Kind, label: 'Credits in statements', value: s.actual.credits, note: 'Your income entry is used instead' },
   ].filter((m) => m.value > 0);
@@ -283,7 +284,7 @@ export function renderDashboard(root: HTMLElement) {
 
     <div class="grid-2">
       ${section('Not counted as spend', movements.length ? `<ul class="movements">${movements.map((m) => `
-        <li><a href="#txns" data-kind="${m.kind}"><span class="dot" style="background:${kindVar(m.kind)}"></span>
+        <li><a href="#txns" data-kind="${'filter' in m ? m.filter : m.kind}"><span class="dot" style="background:${kindVar(m.kind)}"></span>
           <span class="grow"><span class="mv-label">${esc(m.label)}</span><span class="tiny">${esc(m.note)}</span></span>
           <span class="num">${inr(m.value)}</span></a></li>`).join('')}</ul>` : '<p class="muted small">Nothing this month.</p>')}
       ${section('Investments by type', invCats.length ? `<table class="simple data">

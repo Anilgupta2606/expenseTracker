@@ -109,3 +109,31 @@ describe('changing what a transaction counts as', () => {
     expect(defaultCategory('ignore', 'Shopping')).toBe('Not counted');
   });
 });
+
+describe('card bills and the Counted checkbox', () => {
+  it('counts card bill payments as spending', async () => {
+    const { actualsFor } = await import('../src/plans');
+    const a = actualsFor([txn({ amount: 1000 }), txn({ amount: 20000, kind: 'cc_bill', category: 'Credit Card Bill' })]);
+    expect(a.spend).toBe(21000);
+    expect(a.cardBills).toBe(20000);
+  });
+
+  it('leaves unticked rows out of every total', async () => {
+    const { actualsFor } = await import('../src/plans');
+    const a = actualsFor([
+      txn({ amount: 1000 }),
+      txn({ amount: 20000, kind: 'cc_bill', category: 'Credit Card Bill', excluded: true }),
+      txn({ amount: 5000, kind: 'investment', category: 'Stocks', excluded: true }),
+    ]);
+    expect(a.spend).toBe(1000);
+    expect(a.invested).toBe(0);
+    expect(a.excluded).toBe(25000);
+  });
+
+  it('turns the old "Not counted" type into an unticked box', () => {
+    const old = { ...emptyState(), txns: [txn({ kind: 'ignore', category: 'Not counted' })], rules: [{ key: 'X', kind: 'ignore' as const, category: 'Not counted', createdAt: 0 }] };
+    const m = migrate(old as AppState);
+    expect(m.txns[0]).toMatchObject({ kind: 'spend', excluded: true });
+    expect(m.rules[0]).toMatchObject({ kind: 'spend', excluded: true });
+  });
+});

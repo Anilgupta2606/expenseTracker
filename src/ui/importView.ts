@@ -218,6 +218,14 @@ export function renderImport(root: HTMLElement) {
     busy = false;
     render();
   });
+  // Tick or untick "Counted" before saving the statement.
+  root.querySelectorAll<HTMLInputElement>('input[data-counted]').forEach((box) => box.addEventListener('change', () => {
+    for (const p of pending) {
+      const t = p.preview?.fresh.find((x) => x.id === box.dataset.counted);
+      if (t) t.excluded = !box.checked;
+    }
+    render();
+  }));
   // Change the type of a row before saving the statement.
   root.querySelectorAll<HTMLSelectElement>('select[data-counts]').forEach((sel) => sel.addEventListener('change', () => {
     for (const p of pending) {
@@ -253,10 +261,12 @@ export function renderImport(root: HTMLElement) {
         // Rebuild against the latest state so files in one batch pair with each other.
         const pv = buildPreview(p.preview.result, next, p.file.name);
         // Keep the types you changed in the preview.
-        const overrides = new Map(p.preview.fresh.filter((t) => t.source === 'manual').map((t) => [t.id, t]));
+        const edited = new Map(p.preview.fresh.map((t) => [t.id, t]));
         pv.fresh = pv.fresh.map((t) => {
-          const o = overrides.get(t.id);
-          return o ? { ...t, kind: o.kind, category: o.category, source: 'manual' as const } : t;
+          const o = edited.get(t.id);
+          if (!o) return t;
+          const typed = o.source === 'manual' ? { kind: o.kind, category: o.category, source: 'manual' as const } : {};
+          return { ...t, ...typed, excluded: o.excluded };
         });
         added += pv.fresh.length;
         if (pv.fresh.length) {

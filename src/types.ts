@@ -38,6 +38,8 @@ export interface Txn extends ParsedTxn {
   /** Linked self-transfer on another account, if matched. */
   pairId?: string;
   note?: string;
+  /** Left out of every total when true (the "Counted" checkbox is unticked). */
+  excluded?: boolean;
   importedAt: number;
   /** The uploaded statement this row came from. */
   importId: string;
@@ -57,6 +59,7 @@ export interface LearnedRule {
   category: string;
   /** Spend/income rules only apply to the direction they were learned on. */
   direction?: Direction;
+  excluded?: boolean;
   createdAt: number;
 }
 

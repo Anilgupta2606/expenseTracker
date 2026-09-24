@@ -40,7 +40,7 @@ export function openEditSheet(t: Txn) {
 
       <label class="field"><span>Type</span></label>
       <div class="seg" style="margin:-6px 0 12px">
-        ${(Object.keys(CATEGORIES) as Kind[]).map((k) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${esc(KIND_LABEL[k])}</button>`).join('')}
+        ${(Object.keys(CATEGORIES) as Kind[]).filter((k) => k !== 'ignore').map((k) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${esc(KIND_LABEL[k])}</button>`).join('')}
       </div>
       <label class="field"><span>Category</span>
         <select id="cat">${cats.map((c) => `<option ${c === category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
@@ -49,6 +49,7 @@ export function openEditSheet(t: Txn) {
         <input type="checkbox" id="remember" checked style="margin-top:3px">
         <span>Always use this for <strong>${esc(t.merchantName)}</strong>${similar.length ? ` and update ${similar.length} other transaction${similar.length > 1 ? 's' : ''}` : ''}</span>
       </label>
+      <label class="row small" style="margin-bottom:12px"><input type="checkbox" id="counted" ${t.excluded ? '' : 'checked'}><span>Counted in totals</span></label>
       <label class="field"><span>Note</span><input type="text" id="note" value="${esc(t.note ?? '')}" placeholder="Optional"></label>
       <p class="tiny" style="margin-top:-4px">${esc(SOURCE_LABEL[t.source])}</p>
       <div class="row">
@@ -67,6 +68,7 @@ export function openEditSheet(t: Txn) {
     backdrop.querySelector('#save')!.addEventListener('click', async () => {
       const remember = backdrop.querySelector<HTMLInputElement>('#remember')!.checked;
       const note = backdrop.querySelector<HTMLInputElement>('#note')!.value.trim() || undefined;
+      const excluded = !backdrop.querySelector<HTMLInputElement>('#counted')!.checked;
       close();
       await update((s) => {
         const direction = kind === 'spend' || kind === 'income' ? t.direction : undefined;
@@ -75,7 +77,7 @@ export function openEditSheet(t: Txn) {
           ? [...s.rules.filter((r) => !sameRule(r)), { key: t.merchantKey, kind, category, direction, createdAt: Date.now() }]
           : s.rules;
         const txns = s.txns.map((x) => {
-          if (x.id === t.id) return { ...x, kind, category, source: 'manual' as const, note };
+          if (x.id === t.id) return { ...x, kind, category, source: 'manual' as const, note, excluded };
           if (remember && x.merchantKey === t.merchantKey && (!direction || x.direction === direction) && x.source !== 'manual') {
             return { ...x, kind, category, source: 'learned' as const };
           }

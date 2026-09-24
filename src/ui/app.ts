@@ -4,7 +4,7 @@ import { emptyState, saveState } from '../store';
 export interface Filters {
   month: string; // 'all' or YYYY-MM
   account: string; // 'all' or account id
-  kind: Kind | 'all' | 'review';
+  kind: Kind | 'all' | 'review' | 'excluded';
   category: string; // '' = any
   search: string;
   groupBy: 'date' | 'category';

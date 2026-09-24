@@ -55,7 +55,7 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
     const c = categorize(p, merchant, ctx, account.id);
     fresh.push({
       ...p, id, accountId: account.id,
-      kind: c.kind, category: c.category, source: c.source,
+      kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
       merchantKey: merchant.key, merchantName: merchant.name,
       importedAt: now,
       importId,
@@ -97,7 +97,7 @@ export function recategorizeAll(state: AppState): AppState {
     if (t.source === 'manual') return t;
     const merchant = extractMerchant(t.description);
     const c = categorize(t, merchant, ctx, t.accountId);
-    return { ...t, kind: c.kind, category: c.category, source: c.source, pairId: undefined, merchantKey: merchant.key, merchantName: merchant.name };
+    return { ...t, kind: c.kind, category: c.category, source: c.source, excluded: c.source === 'learned' ? c.excluded : t.excluded, pairId: undefined, merchantKey: merchant.key, merchantName: merchant.name };
   });
   pairTransfers(txns);
   return { ...state, txns };
@@ -157,7 +157,7 @@ export function diffRescan(state: AppState, importId: string, result: ParseResul
     const c = categorize(p, merchant, ctx, account.id);
     missing.push({
       ...p, id, accountId: account.id, importId: rec.id, importedAt: Date.now(),
-      kind: c.kind, category: c.category, source: c.source,
+      kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
       merchantKey: merchant.key, merchantName: merchant.name,
     });
   });
