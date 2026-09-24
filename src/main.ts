@@ -6,6 +6,8 @@ import { renderDashboard } from './ui/dashboard';
 import { renderImport } from './ui/importView';
 import { renderSettings } from './ui/settings';
 import { renderTransactions } from './ui/transactions';
+import { isSignedIn, setSignedIn, usernameOf } from './auth';
+import { LOGO, renderLogin } from './ui/login';
 
 const ICONS = {
   home: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
@@ -22,18 +24,44 @@ const ROUTES: { hash: string; label: string; icon: keyof typeof ICONS; view: (ro
 ];
 
 const root = document.getElementById('app')!;
-root.innerHTML = `<main class="app" id="view"></main>
-  <nav class="tabbar">${ROUTES.map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[r.icon]}</svg>${r.label}</a>`).join('')}</nav>`;
-const view = document.getElementById('view')!;
+let view: HTMLElement | null = null;
+
+function mountShell() {
+  root.innerHTML = `<div class="shell">
+    <nav class="sidebar" aria-label="Main">
+      <div class="side-brand">${LOGO}<span class="brand-name">Expense Tracker</span></div>
+      <div class="tabbar">${ROUTES.map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[r.icon]}</svg><span>${r.label}</span></a>`).join('')}</div>
+      <div class="side-user"><span class="tiny">Signed in as <strong id="who"></strong></span><button class="link-btn" data-signout>Sign out</button></div>
+    </nav>
+    <div class="content">
+      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span><button class="link-btn" data-signout aria-label="Sign out">Sign out</button></header>
+      <main class="app" id="view"></main>
+    </div>
+  </div>`;
+  view = document.getElementById('view')!;
+  root.querySelectorAll('[data-signout]').forEach((b) => b.addEventListener('click', () => {
+    setSignedIn(false);
+    render();
+  }));
+}
 
 let lastHash = '';
 function render() {
+  if (!isSignedIn()) {
+    view = null;
+    document.body.classList.add('signed-out');
+    renderLogin(root, () => { document.body.classList.remove('signed-out'); render(); });
+    return;
+  }
+  document.body.classList.remove('signed-out');
+  if (!view) mountShell();
+  root.querySelector('#who')!.textContent = usernameOf(app.state);
   const hash = ROUTES.some((r) => r.hash === location.hash) ? location.hash : '#overview';
   const route = ROUTES.find((r) => r.hash === hash)!;
   document.querySelectorAll<HTMLElement>('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.hash === hash));
   const scroll = window.scrollY;
-  route.view(view);
+  route.view(view!);
   // Keep the scroll position when re-rendering the same screen.
   window.scrollTo(0, hash === lastHash ? scroll : 0);
   lastHash = hash;

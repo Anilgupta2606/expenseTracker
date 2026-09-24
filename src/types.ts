@@ -91,4 +91,6 @@ export interface AppState {
   /** Keyed by YYYY-MM. */
   plans: Record<string, MonthPlan>;
   imports: StatementImport[];
+  /** Sign-in details; missing means the default admin / admin. */
+  auth?: { username: string; passwordHash: string };
 }

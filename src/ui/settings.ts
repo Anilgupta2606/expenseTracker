@@ -1,6 +1,7 @@
 import type { AppState } from '../types';
 import { recategorizeAll } from '../importer';
 import { emptyState, migrate } from '../store';
+import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, toast, update } from './app';
 import { esc } from './format';
 
@@ -29,6 +30,17 @@ export function renderSettings(root: HTMLElement) {
 
   root.innerHTML = `
     <h1>Settings</h1>
+
+    <div class="card">
+      <h2>Sign-in</h2>
+      <p class="small muted" style="margin-top:-4px">Signed in as <strong>${esc(usernameOf(state))}</strong>${state.auth ? '' : ' (default login — please change the password)'}. This locks the app screen on this device; it does not encrypt your data.</p>
+      <label class="field"><span>Current password</span><input type="password" id="cur-pass" autocomplete="current-password"></label>
+      <label class="field"><span>New username</span><input type="text" id="new-user" value="${esc(usernameOf(state))}" autocapitalize="none" spellcheck="false" autocomplete="username"></label>
+      <label class="field"><span>New password</span><input type="password" id="new-pass" autocomplete="new-password"></label>
+      <label class="field"><span>Repeat new password</span><input type="password" id="new-pass2" autocomplete="new-password"></label>
+      <p class="small bad" id="cred-err" hidden></p>
+      <button class="btn primary" id="save-cred">Change sign-in</button>
+    </div>
 
     <div class="card">
       <h2>You</h2>
@@ -78,6 +90,19 @@ export function renderSettings(root: HTMLElement) {
 
   const val = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)!.value;
 
+  root.querySelector('#save-cred')!.addEventListener('click', async () => {
+    const err = root.querySelector<HTMLElement>('#cred-err')!;
+    const fail = (m: string) => { err.textContent = m; err.hidden = false; };
+    const user = val('new-user').trim();
+    const pass = val('new-pass');
+    if (!(await checkLogin(app.state, usernameOf(app.state), val('cur-pass')))) return fail('Current password is incorrect.');
+    if (!user) return fail('Enter a username.');
+    if (pass.length < 4) return fail('Use at least 4 characters for the new password.');
+    if (pass !== val('new-pass2')) return fail('The new passwords do not match.');
+    const next = await withCredentials(app.state, user, pass);
+    await update(() => next);
+    toast('Sign-in updated');
+  });
   root.querySelector('#save-names')!.addEventListener('click', async () => {
     await update((st) => recategorizeAll({ ...st, settings: { ...st.settings, ownNames: splitNames(val('own')), familyNames: splitNames(val('family')) } }));
     toast('Saved');
@@ -96,14 +121,14 @@ export function renderSettings(root: HTMLElement) {
     await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id), imports: st.imports.filter((i) => i.accountId !== id) }));
   }));
   root.querySelector('#export')!.addEventListener('click', () => {
-    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify(app.state));
+    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify({ ...app.state, auth: undefined }));
   });
   const restoreFrom = async (textData: string) => {
     try {
       const data = JSON.parse(textData) as AppState;
       if (!Array.isArray(data.txns) || !Array.isArray(data.accounts)) throw new Error('Not a backup file');
       if (!(await askConfirm(`Replace current data with ${data.txns.length} transactions from the backup?`, 'Restore', false))) return;
-      await update(() => migrate(data));
+      await update((st) => ({ ...migrate(data), auth: st.auth }));
       toast('Backup restored');
     } catch (err) {
       toast(`Could not restore: ${(err as Error).message}`);
@@ -114,7 +139,7 @@ export function renderSettings(root: HTMLElement) {
     if (file) await restoreFrom(await file.text());
   });
   root.querySelector('#copy-backup')!.addEventListener('click', async () => {
-    const json = JSON.stringify(app.state);
+    const json = JSON.stringify({ ...app.state, auth: undefined });
     try {
       await navigator.clipboard.writeText(json);
       toast('Backup copied. Paste it into Notes or a file to keep it.');
@@ -142,7 +167,7 @@ export function renderSettings(root: HTMLElement) {
   });
   root.querySelector('#wipe')!.addEventListener('click', async () => {
     if (!(await askConfirm('Delete all accounts, transactions, monthly plans and rules from this device?', 'Delete everything'))) return;
-    await update(() => emptyState());
+    await update((st) => ({ ...emptyState(), auth: st.auth }));
     toast('All data deleted');
   });
 }

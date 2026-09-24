@@ -14,6 +14,8 @@ A private expense tracker that runs in your phone's browser. Upload a bank state
 
 Everything is processed and stored **on your device** (IndexedDB). Statements are never uploaded anywhere.
 
+**Sign-in:** the app opens with a sign-in screen. The first login is `admin` / `admin`; change it in Settings → Sign-in. This is a screen lock for your device, not encryption: the data itself stays readable to anyone with access to the browser's storage.
+
 ## Supported statements
 
 | Bank | PDF | Excel / CSV |

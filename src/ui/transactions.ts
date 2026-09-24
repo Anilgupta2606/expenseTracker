@@ -41,7 +41,7 @@ export function renderTransactions(root: HTMLElement) {
   const inn = txns.filter((t) => t.direction === 'credit').reduce((a, t) => a + t.amount, 0);
 
   root.innerHTML = `
-    <div class="row between"><h1>Transactions</h1><button class="btn primary" data-add>+ Add</button></div>
+    <div class="page-head"><div><h1>Transactions</h1><p class="page-sub">Tap a row to change its category</p></div><button class="btn primary" data-add>+ Add transaction</button></div>
     ${filterBar()}
     <input type="search" placeholder="Search name, category or amount" value="${esc(filters.search)}" id="search" style="margin-bottom:10px">
     <div class="chips">

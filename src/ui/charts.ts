@@ -74,7 +74,9 @@ export function toSlices(items: { category: string; total: number; count: number
   const top = sorted.slice(0, 7);
   const rest = sorted.slice(top.length);
   const slices = top.map((i, k) => ({ label: i.category, value: i.total, count: i.count, color: SLICE_COLORS[k] ?? OTHER_COLOR }));
-  if (rest.length) {
+  if (rest.length === 1) {
+    slices.push({ label: rest[0].category, value: rest[0].total, count: rest[0].count, color: OTHER_COLOR });
+  } else if (rest.length) {
     slices.push({ label: `Other (${rest.length})`, value: rest.reduce((a, r) => a + r.total, 0), count: rest.reduce((a, r) => a + r.count, 0), color: OTHER_COLOR });
   }
   return slices;
