@@ -37,14 +37,24 @@ export function navigate(route: string) {
 }
 
 let toastTimer: number | undefined;
-export function toast(message: string) {
+export function toast(message: string, action?: { label: string; run: () => void }) {
   document.querySelector('.toast')?.remove();
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
+  const text = document.createElement('span');
+  text.className = 'toast-text';
+  text.textContent = message;
+  el.append(text);
+  if (action) {
+    const b = document.createElement('button');
+    b.className = 'toast-action';
+    b.textContent = action.label;
+    b.addEventListener('click', () => { el.remove(); action.run(); });
+    el.append(b);
+  }
   document.body.append(el);
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => el.remove(), 3500);
+  toastTimer = window.setTimeout(() => el.remove(), action ? 7000 : 3500);
 }
 
 /** In-page confirmation; native confirm() is blocked in some embedded viewers. */

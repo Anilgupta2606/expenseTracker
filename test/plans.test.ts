@@ -88,3 +88,24 @@ describe('uploaded statements', () => {
     expect(m.txns[0].importId).toBe(m.imports[0].id);
   });
 });
+
+describe('changing what a transaction counts as', () => {
+  it('leaves "Not counted" rows out of every total', async () => {
+    const { actualsFor } = await import('../src/plans');
+    const a = actualsFor([
+      txn({ amount: 1000 }),
+      txn({ amount: 5000, kind: 'ignore', category: 'Not counted' }),
+      txn({ amount: 3000, kind: 'investment', category: 'Other Investment' }),
+    ]);
+    expect(a.spend).toBe(1000);
+    expect(a.invested).toBe(3000);
+  });
+
+  it('picks a sensible category for the new type', async () => {
+    const { defaultCategory } = await import('../src/categorize/categories');
+    expect(defaultCategory('investment', 'Shopping')).toBe('Other Investment');
+    expect(defaultCategory('spend', 'Mutual Funds')).toBe('Uncategorised');
+    expect(defaultCategory('spend', 'Shopping')).toBe('Shopping');
+    expect(defaultCategory('ignore', 'Shopping')).toBe('Not counted');
+  });
+});
