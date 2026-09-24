@@ -44,7 +44,7 @@ export function bindFilterBar(root: HTMLElement) {
 }
 
 function tile(kind: Kind, label: string, value: number, sub: string, hero = false) {
-  return `<a class="tile${hero ? ' hero' : ''}" href="#/txns" data-kind="${kind}">
+  return `<a class="tile${hero ? ' hero' : ''}" href="#txns" data-kind="${kind}">
     <div class="label"><span class="dot" style="background:${kindVar(kind)}"></span>${esc(label)}</div>
     <div class="value num">${inr(value)}</div>
     <div class="sub">${esc(sub)}</div>
@@ -60,7 +60,7 @@ export function renderDashboard(root: HTMLElement) {
       <div class="card empty">
         <p style="font-size:17px;color:var(--text)"><strong>Upload your first statement</strong></p>
         <p>PDF or Excel from HDFC, ICICI and most other banks. Everything stays on this device.</p>
-        <a class="btn primary" href="#/import" style="display:inline-block;text-decoration:none">Upload statement</a>
+        <a class="btn primary" href="#upload" style="display:inline-block;text-decoration:none">Upload statement</a>
       </div>`;
     return;
   }
@@ -89,7 +89,7 @@ export function renderDashboard(root: HTMLElement) {
   root.innerHTML = `
     <h1>Expenses</h1>
     ${filterBar()}
-    ${review.length ? `<a class="banner" href="#/txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
+    ${review.length ? `<a class="banner" href="#txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
     <div class="tiles">
       ${tile('spend', 'Spent', totalSpend, `${spend.length} payments${refunds.length ? ` · ${inr(sum(refunds))} refunded` : ''}`, true)}
       ${tile('income', 'Income', sum(income), `${income.length} credits`)}
@@ -102,7 +102,7 @@ export function renderDashboard(root: HTMLElement) {
       <h2>Where the money went</h2>
       ${spendCats.length ? `<div class="bars">
         ${spendCats.map((c) => `
-          <a class="bar-row" href="#/txns" data-kind="spend" data-category="${esc(c.category)}">
+          <a class="bar-row" href="#txns" data-kind="spend" data-category="${esc(c.category)}">
             <div class="top"><span class="ellipsis">${esc(c.category)} <span class="tiny">· ${c.count}</span></span>
             <span class="num">${inr(c.total)} <span class="tiny">${Math.round((c.total / (sum(spend) || 1)) * 100)}%</span></span></div>
             <div class="bar-track"><div class="bar-fill" style="width:${(c.total / maxCat) * 100}%"></div></div>
@@ -114,7 +114,7 @@ export function renderDashboard(root: HTMLElement) {
       <h2>Investments</h2>
       <table class="simple">
         <tr><th>Category</th><th style="text-align:right">Net invested</th></tr>
-        ${invCats.map((c) => `<tr><td><a href="#/txns" data-kind="investment" data-category="${esc(c.category)}" style="color:inherit">${esc(c.category)}</a></td><td class="num" style="text-align:right">${c.total < 0 ? '−' : ''}${inr(Math.abs(c.total))}</td></tr>`).join('')}
+        ${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}" style="color:inherit">${esc(c.category)}</a></td><td class="num" style="text-align:right">${c.total < 0 ? '−' : ''}${inr(Math.abs(c.total))}</td></tr>`).join('')}
       </table>
       <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>
     </div>` : ''}
@@ -127,7 +127,7 @@ export function renderDashboard(root: HTMLElement) {
       e.preventDefault();
       app.filters.kind = el.dataset.kind as Kind | 'review';
       app.filters.category = el.dataset.category ?? '';
-      navigate('#/txns');
+      navigate('#txns');
     });
   });
 }

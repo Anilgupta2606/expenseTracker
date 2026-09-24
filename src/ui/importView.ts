@@ -140,6 +140,6 @@ export function renderImport(root: HTMLElement) {
     toast(`Saved ${added} transactions`);
     app.filters.kind = 'all';
     app.filters.category = '';
-    navigate('#/');
+    navigate('#overview');
   });
 }

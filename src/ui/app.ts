@@ -43,3 +43,32 @@ export function toast(message: string) {
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => el.remove(), 3500);
 }
+
+/** True when running inside another page's frame (e.g. a hosted preview). */
+export const embedded = (() => {
+  try {
+    return window.top !== window;
+  } catch {
+    return true;
+  }
+})();
+
+/** In-page confirmation; native confirm() is blocked in some embedded viewers. */
+export function askConfirm(message: string, confirmLabel: string, danger = true): Promise<boolean> {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sheet-backdrop';
+    backdrop.innerHTML = `<div class="sheet" role="alertdialog" aria-modal="true">
+      <div class="grab"></div>
+      <p style="font-size:16px;margin:4px 0 16px"></p>
+      <div class="row"><button class="btn grow" data-no>Cancel</button>
+      <button class="btn grow ${danger ? 'danger' : 'primary'}" data-yes></button></div></div>`;
+    backdrop.querySelector('p')!.textContent = message;
+    backdrop.querySelector('[data-yes]')!.textContent = confirmLabel;
+    const done = (v: boolean) => { backdrop.remove(); resolve(v); };
+    backdrop.querySelector('[data-no]')!.addEventListener('click', () => done(false));
+    backdrop.querySelector('[data-yes]')!.addEventListener('click', () => done(true));
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) done(false); });
+    document.body.append(backdrop);
+  });
+}

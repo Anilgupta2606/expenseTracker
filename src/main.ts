@@ -15,10 +15,10 @@ const ICONS = {
 };
 
 const ROUTES: { hash: string; label: string; icon: keyof typeof ICONS; view: (root: HTMLElement) => void }[] = [
-  { hash: '#/', label: 'Overview', icon: 'home', view: renderDashboard },
-  { hash: '#/txns', label: 'Transactions', icon: 'list', view: renderTransactions },
-  { hash: '#/import', label: 'Upload', icon: 'upload', view: renderImport },
-  { hash: '#/settings', label: 'Settings', icon: 'gear', view: renderSettings },
+  { hash: '#overview', label: 'Overview', icon: 'home', view: renderDashboard },
+  { hash: '#txns', label: 'Transactions', icon: 'list', view: renderTransactions },
+  { hash: '#upload', label: 'Upload', icon: 'upload', view: renderImport },
+  { hash: '#settings', label: 'Settings', icon: 'gear', view: renderSettings },
 ];
 
 const root = document.getElementById('app')!;
@@ -29,7 +29,7 @@ const view = document.getElementById('view')!;
 
 let lastHash = '';
 function render() {
-  const hash = ROUTES.some((r) => r.hash === location.hash) ? location.hash : '#/';
+  const hash = ROUTES.some((r) => r.hash === location.hash) ? location.hash : '#overview';
   const route = ROUTES.find((r) => r.hash === hash)!;
   document.querySelectorAll<HTMLElement>('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.hash === hash));
   const scroll = window.scrollY;
@@ -47,4 +47,11 @@ loadState().then((state) => {
   render();
 });
 
-registerSW({ immediate: true });
+// Offline support where the browser allows a service worker (not inside an embedded frame).
+if ('serviceWorker' in navigator && window.top === window) {
+  try {
+    registerSW({ immediate: true });
+  } catch {
+    // Works without offline caching.
+  }
+}

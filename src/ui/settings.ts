@@ -1,7 +1,7 @@
 import type { AppState } from '../types';
 import { recategorizeAll } from '../importer';
 import { AI_MODELS, emptyState } from '../store';
-import { app, render, toast, update } from './app';
+import { app, askConfirm, embedded, render, toast, update } from './app';
 import { esc } from './format';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
@@ -64,6 +64,7 @@ export function renderSettings(root: HTMLElement) {
 
     <div class="card">
       <h2>AI categorisation (optional)</h2>
+      ${embedded ? '<p class="small bad">This hosted copy cannot reach the Claude API. Use the app from its own website (see README) to turn this on.</p>' : ''}
       <p class="small muted" style="margin-top:-4px">Sends only the narration, amount and direction of <em>uncategorised</em> rows to Claude with your own API key. This uses API credits from console.anthropic.com, which are separate from a Claude subscription. The key is stored only on this device.</p>
       <label class="field"><span>Claude API key</span>
         <input type="password" id="key" value="${esc(s.aiApiKey ?? '')}" placeholder="sk-ant-…" autocomplete="off"></label>
@@ -80,11 +81,14 @@ export function renderSettings(root: HTMLElement) {
       <h2>Your data</h2>
       <p class="small muted" style="margin-top:-4px">Stored only in this browser. Export a backup now and then, especially before clearing Safari data.</p>
       <div class="row wrap">
-        <button class="btn" id="export">Export backup</button>
-        <label class="btn" style="display:inline-flex;align-items:center">Restore backup<input type="file" id="restore" accept="application/json,.json" hidden></label>
-        <button class="btn" id="csv">Export CSV</button>
+        <button class="btn" id="export">Download backup</button>
+        <button class="btn" id="copy-backup">Copy backup</button>
+        <label class="btn" style="display:inline-flex;align-items:center">Restore from file<input type="file" id="restore" accept="application/json,.json" hidden></label>
+        <button class="btn" id="paste-restore">Restore from text</button>
+        <button class="btn" id="csv">Download CSV</button>
         <button class="btn danger" id="wipe">Delete everything</button>
       </div>
+      <textarea id="backup-text" rows="4" hidden style="margin-top:10px;font-size:12px"></textarea>
     </div>
     <p class="tiny" style="text-align:center">Expense Tracker · all processing happens on your device</p>
   `;
@@ -105,7 +109,7 @@ export function renderSettings(root: HTMLElement) {
   }));
   root.querySelectorAll<HTMLElement>('[data-del-account]').forEach((b) => b.addEventListener('click', async () => {
     const id = b.dataset.delAccount!;
-    if (!confirm(`Delete ${id} and all its transactions?`)) return;
+    if (!(await askConfirm(`Delete ${id} and all its transactions?`, 'Delete account'))) return;
     await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id) }));
   }));
   root.querySelector('#save-ai')!.addEventListener('click', async () => {
@@ -140,25 +144,52 @@ export function renderSettings(root: HTMLElement) {
     const { aiApiKey: _key, ...settings } = app.state.settings;
     download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify({ ...app.state, settings }));
   });
-  root.querySelector<HTMLInputElement>('#restore')!.addEventListener('change', async (e) => {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
+  const restoreFrom = async (textData: string) => {
     try {
-      const data = JSON.parse(await file.text()) as AppState;
+      const data = JSON.parse(textData) as AppState;
       if (!Array.isArray(data.txns) || !Array.isArray(data.accounts)) throw new Error('Not a backup file');
-      if (!confirm(`Replace current data with ${data.txns.length} transactions from the backup?`)) return;
+      if (!(await askConfirm(`Replace current data with ${data.txns.length} transactions from the backup?`, 'Restore', false))) return;
       const base = emptyState();
       await update((st) => ({ ...base, ...data, settings: { ...base.settings, ...data.settings, aiApiKey: st.settings.aiApiKey } }));
       toast('Backup restored');
     } catch (err) {
       toast(`Could not restore: ${(err as Error).message}`);
     }
+  };
+  root.querySelector<HTMLInputElement>('#restore')!.addEventListener('change', async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (file) await restoreFrom(await file.text());
+  });
+  root.querySelector('#copy-backup')!.addEventListener('click', async () => {
+    const { aiApiKey: _key, ...settings } = app.state.settings;
+    const json = JSON.stringify({ ...app.state, settings });
+    try {
+      await navigator.clipboard.writeText(json);
+      toast('Backup copied. Paste it into Notes or a file to keep it.');
+    } catch {
+      const box = root.querySelector<HTMLTextAreaElement>('#backup-text')!;
+      box.value = json;
+      box.hidden = false;
+      box.select();
+      toast('Select all and copy the text below');
+    }
+  });
+  root.querySelector('#paste-restore')!.addEventListener('click', async () => {
+    const box = root.querySelector<HTMLTextAreaElement>('#backup-text')!;
+    if (box.hidden || !box.value.trim()) {
+      box.value = '';
+      box.hidden = false;
+      box.placeholder = 'Paste a backup here, then tap Restore from text again';
+      box.focus();
+      return;
+    }
+    await restoreFrom(box.value);
   });
   root.querySelector('#csv')!.addEventListener('click', () => {
     download(`expenses-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv', toCsv(app.state));
   });
   root.querySelector('#wipe')!.addEventListener('click', async () => {
-    if (!confirm('Delete all accounts, transactions and rules from this device?')) return;
+    if (!(await askConfirm('Delete all accounts, transactions and rules from this device?', 'Delete everything'))) return;
     await update(() => emptyState());
     toast('All data deleted');
   });
