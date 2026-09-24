@@ -1,8 +1,8 @@
 import type { Kind } from '../types';
 import { defaultCategory, KIND_LABEL } from '../categorize/categories';
-import { buildPreview, commitPreview, deleteImport, parseFile, recategorizeAll, type ImportPreview } from '../importer';
+import { applyRescan, buildPreview, commitPreview, deleteImport, diffRescan, parseFile, parseThorough, recategorizeAll, type ImportPreview } from '../importer';
 import { PasswordNeededError } from '../parse/errors';
-import { requestPersistence } from '../store';
+import { deleteFile, loadFile, requestPersistence, saveFile, type StoredFile } from '../store';
 import { app, askConfirm, navigate, render, toast, update } from './app';
 import { dayLabel, esc, inr, kindVar } from './format';
 import { txnRow } from './transactions';
@@ -76,6 +76,81 @@ function previewCard(p: Pending, i: number): string {
   </div>`;
 }
 
+/** Asks for a file with a hidden picker (for statements uploaded before files were kept). */
+function pickFile(): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = Object.assign(document.createElement('input'), { type: 'file', accept: '.pdf,.xls,.xlsx,.csv,application/pdf' });
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null));
+    input.click();
+  });
+}
+
+/** In-page password prompt for protected PDFs. */
+function askPassword(fileName: string, wrong: boolean): Promise<string | null> {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sheet-backdrop';
+    backdrop.innerHTML = `<form class="sheet" novalidate>
+      <div class="grab"></div>
+      <h2>Password for ${esc(fileName)}</h2>
+      ${wrong ? '<p class="small bad">That password did not work.</p>' : '<p class="small muted">This PDF is password protected.</p>'}
+      <label class="field"><span>PDF password</span><input type="password" id="rp" autocomplete="off"></label>
+      <div class="row"><button type="button" class="btn grow" data-no>Cancel</button><button class="btn primary grow">Open</button></div>
+    </form>`;
+    const done = (v: string | null) => { backdrop.remove(); resolve(v); };
+    backdrop.querySelector('[data-no]')!.addEventListener('click', () => done(null));
+    backdrop.querySelector('form')!.addEventListener('submit', (e) => { e.preventDefault(); done(backdrop.querySelector<HTMLInputElement>('#rp')!.value); });
+    document.body.append(backdrop);
+    backdrop.querySelector<HTMLInputElement>('#rp')!.focus();
+  });
+}
+
+async function rescan(importId: string) {
+  const rec = app.state.imports.find((i) => i.id === importId);
+  if (!rec) return;
+  let file: StoredFile | undefined = await loadFile(importId);
+  if (!file) {
+    toast('This statement was uploaded before files were kept. Choose the same file to rescan it.');
+    const picked = await pickFile();
+    if (!picked) return;
+    file = { name: picked.name, type: picked.type, data: await picked.arrayBuffer() };
+  }
+  let password: string | undefined;
+  let result;
+  for (;;) {
+    try {
+      toast('Rescanning…');
+      result = await parseThorough(file.data, file.name, file.type, password);
+      break;
+    } catch (e) {
+      if (e instanceof PasswordNeededError) {
+        const pw = await askPassword(file.name, e.incorrect);
+        if (pw == null) return;
+        password = pw;
+        continue;
+      }
+      toast(`Could not read the file: ${(e as Error).message}`);
+      return;
+    }
+  }
+  const diff = diffRescan(app.state, importId, result);
+  // Keep the file for next time if it had to be picked again.
+  if (!rec.hasFile) {
+    await saveFile(importId, file);
+    await update((s) => ({ ...s, imports: s.imports.map((i) => (i.id === importId ? { ...i, hasFile: true } : i)) }));
+  }
+  const balance = result.balanceMismatches === 0 ? 'The running balance adds up on every row.' : `${result.balanceMismatches} row(s) still don't add up to the running balance; check them against the PDF.`;
+  if (!diff.missing.length) {
+    await update((s) => applyRescan(s, importId, diff));
+    toast(`No missed rows: all ${result.txns.length} rows are already in the app. ${balance}`);
+    return;
+  }
+  const ok = await askConfirm(`Found ${diff.missing.length} row${diff.missing.length > 1 ? 's' : ''} that ${diff.missing.length > 1 ? 'were' : 'was'} missed (${diff.matched} already in the app). ${balance} Add ${diff.missing.length > 1 ? 'them' : 'it'}?`, `Add ${diff.missing.length} row${diff.missing.length > 1 ? 's' : ''}`, false);
+  if (!ok) return;
+  await update((s) => applyRescan(s, importId, diff));
+  toast(`Added ${diff.missing.length} missed row${diff.missing.length > 1 ? 's' : ''}`);
+}
+
 function uploadedList(): string {
   const { imports, txns, accounts } = app.state;
   if (!imports.length) return '';
@@ -84,15 +159,23 @@ function uploadedList(): string {
     <div class="list">${rows.map((r) => {
       const acc = accounts.find((a) => a.id === r.accountId);
       const n = txns.filter((t) => t.importId === r.id).length;
-      return `<div class="txn" style="cursor:default">
-        <span class="grow">
+      const check = r.balanceMismatches == null ? ''
+        : r.balanceMismatches === 0 ? '<span class="pill ok">✓ Balance adds up</span>'
+        : `<span class="pill warn">⚠ ${r.balanceMismatches} gap${r.balanceMismatches > 1 ? 's' : ''} in balance · rescan</span>`;
+      return `<div class="upload-row">
+        <div class="grow">
           <div class="name ellipsis">${esc(r.fileName)}</div>
-          <div class="meta">${esc(acc ? `${acc.bank} ••${acc.number.slice(-4)}` : r.accountId)} · ${esc(r.from)} to ${esc(r.to)} · ${n} rows<br>Uploaded ${esc(dayLabel(new Date(r.importedAt).toISOString().slice(0, 10)))}</div>
-        </span>
-        <button class="btn danger" data-del-import="${esc(r.id)}">Delete</button>
+          <div class="meta">${esc(acc ? `${acc.bank} ••${acc.number.slice(-4)}` : r.accountId)} · ${esc(r.from)} to ${esc(r.to)} · ${n} rows</div>
+          <div class="meta">Uploaded ${esc(dayLabel(new Date(r.importedAt).toISOString().slice(0, 10)))}${r.rescannedAt ? ` · rescanned ${esc(dayLabel(new Date(r.rescannedAt).toISOString().slice(0, 10)))}` : ''}</div>
+          ${check ? `<div style="margin-top:6px">${check}</div>` : ''}
+        </div>
+        <div class="upload-actions">
+          <button class="btn small-btn" data-rescan="${esc(r.id)}">Rescan</button>
+          <button class="btn small-btn danger" data-del-import="${esc(r.id)}">Delete</button>
+        </div>
       </div>`;
     }).join('')}</div>
-    <p class="tiny" style="margin:8px 4px">Deleting a statement removes its transactions from every screen. You can upload it again later.</p>`;
+    <p class="tiny" style="margin:8px 4px"><strong>Rescan</strong> reads the file again with several settings and adds any rows that were missed; your changes to existing rows stay. <strong>Delete</strong> removes the statement and its transactions.</p>`;
 }
 
 export function renderImport(root: HTMLElement) {
@@ -117,8 +200,10 @@ export function renderImport(root: HTMLElement) {
     const n = app.state.txns.filter((t) => t.importId === rec.id).length;
     if (!(await askConfirm(`Delete "${rec.fileName}" and its ${n} transactions? Your monthly plans and learned rules stay.`, 'Delete statement'))) return;
     await update((s) => deleteImport(s, rec.id));
+    await deleteFile(rec.id);
     toast('Statement deleted');
   }));
+  root.querySelectorAll<HTMLElement>('[data-rescan]').forEach((b) => b.addEventListener('click', () => void rescan(b.dataset.rescan!)));
 
   root.querySelector<HTMLInputElement>('#file')!.addEventListener('change', async (e) => {
     const files = [...((e.target as HTMLInputElement).files ?? [])];
@@ -160,6 +245,7 @@ export function renderImport(root: HTMLElement) {
   }));
   root.querySelector('#save')?.addEventListener('click', async () => {
     let added = 0;
+    const toStore: { id: string; file: File }[] = [];
     await update((s) => {
       let next = s;
       for (const p of pending) {
@@ -173,6 +259,10 @@ export function renderImport(root: HTMLElement) {
           return o ? { ...t, kind: o.kind, category: o.category, source: 'manual' as const } : t;
         });
         added += pv.fresh.length;
+        if (pv.fresh.length) {
+          pv.record.hasFile = true;
+          toStore.push({ id: pv.record.id, file: p.file });
+        }
         next = commitPreview(next, pv);
         const holder = pv.account.holderName;
         if (holder && !next.settings.ownNames.some((n) => n.toUpperCase() === holder)) {
@@ -182,6 +272,10 @@ export function renderImport(root: HTMLElement) {
       return recategorizeAll(next);
     });
     pending = [];
+    // Keep the original files so statements can be rescanned later.
+    for (const f of toStore) {
+      await saveFile(f.id, { name: f.file.name, type: f.file.type, data: await f.file.arrayBuffer() });
+    }
     void requestPersistence();
     toast(`Saved ${added} transactions`);
     app.filters.kind = 'all';

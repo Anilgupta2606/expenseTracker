@@ -14,13 +14,7 @@ export interface ImportPreview {
 }
 
 export async function parseFile(file: File, password?: string): Promise<ParseResult> {
-  const data = await file.arrayBuffer();
-  if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
-    const [{ readPdfPages }, { parseLayout }] = await Promise.all([import('./parse/pdf'), import('./parse/layout')]);
-    return parseLayout(await readPdfPages(data, password));
-  }
-  const { readSheet } = await import('./parse/sheet');
-  return readSheet(data);
+  return parseThorough(await file.arrayBuffer(), file.name, file.type, password);
 }
 
 export function accountFor(result: ParseResult, state: AppState, fileName: string): { account: Account; isNew: boolean } {
@@ -72,7 +66,10 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   pairTransfers([...earlier, ...fresh]);
   const updated = earlier.filter((t, i) => t.pairId !== state.txns[i].pairId);
   const dates = fresh.map((t) => t.date).sort();
-  const record: StatementImport = { id: importId, fileName, accountId: account.id, from: dates[0] ?? '', to: dates[dates.length - 1] ?? '', importedAt: now };
+  const record: StatementImport = {
+    id: importId, fileName, accountId: account.id, from: dates[0] ?? '', to: dates[dates.length - 1] ?? '', importedAt: now,
+    rows: result.txns.length, balanceMismatches: result.balanceMismatches,
+  };
   return { result, account, isNewAccount: isNew, fresh, duplicates, updated, record };
 }
 
@@ -104,4 +101,75 @@ export function recategorizeAll(state: AppState): AppState {
   });
   pairTransfers(txns);
   return { ...state, txns };
+}
+
+/** Fewer balance breaks wins; then more rows. */
+function better(a: ParseResult, b: ParseResult): boolean {
+  if (!b.txns.length) return true;
+  if (!a.txns.length) return false;
+  if (a.balanceMismatches !== b.balanceMismatches) return a.balanceMismatches < b.balanceMismatches;
+  return a.txns.length > b.txns.length;
+}
+
+/**
+ * Reads a statement again, trying several line-grouping settings, and keeps
+ * the reading whose running balance holds best.
+ */
+export async function parseThorough(data: ArrayBuffer, fileName: string, type: string, password?: string): Promise<ParseResult> {
+  if (/\.pdf$/i.test(fileName) || type === 'application/pdf') {
+    const [{ readPdfItems }, { groupLines, parseLayout }] = await Promise.all([import('./parse/pdf'), import('./parse/layout')]);
+    const items = await readPdfItems(data.slice(0), password);
+    let best: ParseResult | null = null;
+    for (const tolerance of [2, 1, 3, 4]) {
+      const pages = items.map((p) => groupLines(p, tolerance));
+      for (const preLine of [0.75, 0.6, 0.9]) {
+        const r = parseLayout(pages, { preLine });
+        if (!best || better(r, best)) best = r;
+      }
+    }
+    return best!;
+  }
+  const { readSheet } = await import('./parse/sheet');
+  return readSheet(data.slice(0));
+}
+
+export interface RescanResult {
+  result: ParseResult;
+  missing: Txn[];
+  /** Rows already in the app that the new reading also found. */
+  matched: number;
+}
+
+/** Rows a new reading of a statement found that the app doesn't have yet. */
+export function diffRescan(state: AppState, importId: string, result: ParseResult): RescanResult {
+  const rec = state.imports.find((i) => i.id === importId);
+  if (!rec) return { result, missing: [], matched: 0 };
+  const account = state.accounts.find((a) => a.id === rec.accountId) ?? { id: rec.accountId, bank: result.meta.bank, number: rec.accountId };
+  const ctx = contextFor(state, account);
+  const existing = new Set(state.txns.map((t) => t.id));
+  const missing: Txn[] = [];
+  let matched = 0;
+  result.txns.forEach((p, i) => {
+    const id = txnId(account.id, p, i);
+    if (existing.has(id)) { matched++; return; }
+    existing.add(id);
+    const merchant = extractMerchant(p.description);
+    const c = categorize(p, merchant, ctx, account.id);
+    missing.push({
+      ...p, id, accountId: account.id, importId: rec.id, importedAt: Date.now(),
+      kind: c.kind, category: c.category, source: c.source,
+      merchantKey: merchant.key, merchantName: merchant.name,
+    });
+  });
+  return { result, missing, matched };
+}
+
+export function applyRescan(state: AppState, importId: string, rescan: RescanResult): AppState {
+  const dates = [...state.txns.filter((t) => t.importId === importId), ...rescan.missing].map((t) => t.date).sort();
+  const imports = state.imports.map((i) => (i.id === importId ? {
+    ...i, rows: rescan.result.txns.length, balanceMismatches: rescan.result.balanceMismatches,
+    from: dates[0] ?? i.from, to: dates[dates.length - 1] ?? i.to, rescannedAt: Date.now(),
+  } : i));
+  const txns = [...state.txns, ...rescan.missing].sort((a, b) => b.date.localeCompare(a.date));
+  return recategorizeAll({ ...state, imports, txns });
 }

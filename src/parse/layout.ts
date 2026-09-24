@@ -26,12 +26,15 @@ interface Columns {
 }
 
 /** Groups raw text items into lines by y position. */
-export function groupLines(items: { x: number; y: number; w: number; s: string }[]): Line[] {
+export type RawItem = { x: number; y: number; w: number; s: string };
+
+/** Groups raw text items into lines; `tolerance` is how far apart (in PDF units) items on one line may sit. */
+export function groupLines(items: RawItem[], tolerance = 2): Line[] {
   const lines: Line[] = [];
   const sorted = items.filter((i) => i.s.trim()).sort((a, b) => b.y - a.y || a.x - b.x);
   for (const it of sorted) {
     const last = lines[lines.length - 1];
-    if (last && Math.abs(last.y - it.y) <= 2) last.items.push({ x: it.x, w: it.w, s: it.s.trim() });
+    if (last && Math.abs(last.y - it.y) <= tolerance) last.items.push({ x: it.x, w: it.w, s: it.s.trim() });
     else lines.push({ y: it.y, items: [{ x: it.x, w: it.w, s: it.s.trim() }] });
   }
   for (const l of lines) l.items.sort((a, b) => a.x - b.x);
@@ -90,7 +93,13 @@ interface Row {
  * Parses a bank statement laid out as a table (date, narration, withdrawal,
  * deposit, balance). Works for HDFC, ICICI and most Indian bank PDFs.
  */
-export function parseLayout(pages: Page[]): ParseResult {
+export interface LayoutOptions {
+  /** A line this close above a date row (as a share of the normal line gap) belongs to that row. */
+  preLine?: number;
+}
+
+export function parseLayout(pages: Page[], opts: LayoutOptions = {}): ParseResult {
+  const preLine = opts.preLine ?? 0.75;
   const allText = pages.flat().map(lineText);
   const joined = allText.join('\n');
   const bank = detectBank(joined);
@@ -172,7 +181,7 @@ export function parseLayout(pages: Page[]): ParseResult {
       // A line just above an anchor (closer than a normal line gap) belongs to it:
       // ICICI vertically centres the remarks around the date.
       const next = body[k + 1];
-      if (next && isAnchor(next) && l.y - next.y < gap * 0.75) pending.push(entry);
+      if (next && isAnchor(next) && l.y - next.y < gap * preLine) pending.push(entry);
       else if (rows.length) rows[rows.length - 1].descLines.push(entry);
       else pending.push(entry);
     }
