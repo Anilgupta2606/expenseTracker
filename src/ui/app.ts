@@ -8,11 +8,13 @@ export interface Filters {
   category: string; // '' = any
   search: string;
   groupBy: 'date' | 'category';
+  /** Months shown in the charts: 6, 12 or 0 for all. */
+  range: number;
 }
 
 export const app = {
   state: emptyState(),
-  filters: { month: 'all', account: 'all', kind: 'all', category: '', search: '', groupBy: 'date' } as Filters,
+  filters: { month: 'all', account: 'all', kind: 'all', category: '', search: '', groupBy: 'date', range: 6 } as Filters,
 };
 
 let renderFn: () => void = () => {};

@@ -7,6 +7,8 @@ A private expense tracker that runs in your phone's browser. Upload a bank state
 - keeps investments, self transfers and credit card bill payments **out of your spend**;
 - learns from your corrections ("always use this for Swiggy");
 - lets you set your **monthly income, expected spend and expected investment**, then tells you whether you **saved or overspent** (income − spend − investment), with month-by-month charts and history;
+- shows a month-at-a-glance summary, a spending-by-category donut, and a month-by-month trend line of spend and investment (last 6 months by default; 12 months or all history on request);
+- lets you add transactions by hand (cash, or any future-dated spend) and edit or delete them later;
 - groups transactions by date or by category;
 - keeps a list of uploaded statements, and deleting one removes its transactions.
 

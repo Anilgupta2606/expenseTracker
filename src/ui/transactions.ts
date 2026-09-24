@@ -3,6 +3,7 @@ import { KIND_LABEL } from '../categorize/categories';
 import { app, render } from './app';
 import { bindFilterBar, filterBar } from './dashboard';
 import { openEditSheet } from './edit';
+import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { applyFilters, dayLabel, esc, initials, inrFull, kindVar } from './format';
 
 const KIND_CHIPS: (Kind | 'all' | 'review')[] = ['all', 'review', 'spend', 'income', 'investment', 'transfer', 'cc_bill'];
@@ -16,7 +17,7 @@ export function txnRow(t: Txn): string {
       <div class="name ellipsis">${esc(t.merchantName)}</div>
       <div class="meta ellipsis">
         <span class="badge${review ? ' warn' : ''}">${esc(review ? 'Needs category' : t.category)}</span>
-        ${esc(KIND_LABEL[t.kind])}${account && app.state.accounts.length > 1 ? ` · ${esc(account.bank)}` : ''}
+        ${esc(KIND_LABEL[t.kind])}${t.accountId === MANUAL_ACCOUNT ? ' · Added by hand' : account && app.state.accounts.length > 1 ? ` · ${esc(account.bank)}` : ''}
       </div>
     </span>
     <span class="num amt ${t.direction}">${t.direction === 'credit' ? '+' : '−'}${inrFull(t.amount)}</span>
@@ -40,7 +41,7 @@ export function renderTransactions(root: HTMLElement) {
   const inn = txns.filter((t) => t.direction === 'credit').reduce((a, t) => a + t.amount, 0);
 
   root.innerHTML = `
-    <h1>Transactions</h1>
+    <div class="row between"><h1>Transactions</h1><button class="btn primary" data-add>+ Add</button></div>
     ${filterBar()}
     <input type="search" placeholder="Search name, category or amount" value="${esc(filters.search)}" id="search" style="margin-bottom:10px">
     <div class="chips">
@@ -64,6 +65,7 @@ export function renderTransactions(root: HTMLElement) {
           <div class="list">${list.map(txnRow).join('')}</div>`).join('')}
   `;
   bindFilterBar(root);
+  root.querySelector('[data-add]')!.addEventListener('click', () => openManualSheet(undefined, filters.month !== 'all' ? `${filters.month}-01` : undefined));
   const search = root.querySelector<HTMLInputElement>('#search')!;
   search.addEventListener('input', () => {
     filters.search = search.value;
@@ -84,7 +86,7 @@ export function renderTransactions(root: HTMLElement) {
   }));
   root.querySelectorAll<HTMLElement>('.txn').forEach((el) => el.addEventListener('click', () => {
     const t = state.txns.find((x) => x.id === el.dataset.id);
-    if (t) openEditSheet(t);
+    if (t) (t.accountId === MANUAL_ACCOUNT ? openManualSheet(t) : openEditSheet(t));
   }));
 }
 
