@@ -1,0 +1,10 @@
+node_modules
+dist
+*.local
+# Never commit real bank statements
+*.pdf
+*.xls
+*.xlsx
+*.csv
+!test/fixtures/*.csv
+test/local-*
