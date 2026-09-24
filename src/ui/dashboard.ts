@@ -1,10 +1,9 @@
 import type { Kind, Txn } from '../types';
+import { currentMonth, monthRange, summarize, type MonthSummary } from '../plans';
 import { app, navigate, render } from './app';
-import { applyFilters, esc, inr, kindVar, monthLabel, monthsOf } from './format';
-
-function sum(txns: Txn[]) {
-  return txns.reduce((a, t) => a + t.amount, 0);
-}
+import { monthlyChart, type MonthPoint } from './charts';
+import { applyFilters, esc, inr, kindVar, monthLabel, monthShort } from './format';
+import { openPlanSheet } from './planSheet';
 
 function byCategory(txns: Txn[]): { category: string; total: number; count: number }[] {
   const m = new Map<string, { total: number; count: number }>();
@@ -17,13 +16,18 @@ function byCategory(txns: Txn[]): { category: string; total: number; count: numb
   return [...m.entries()].map(([category, v]) => ({ category, ...v })).sort((a, b) => b.total - a.total);
 }
 
-export function filterBar(): string {
+/** Months to offer: everything with data or a plan, plus the current month. Newest first. */
+export function availableMonths(): string[] {
+  return [...new Set([...monthRange(app.state), currentMonth()])].sort().reverse();
+}
+
+export function filterBar(allowAll = true): string {
   const { state, filters } = app;
-  const months = monthsOf(state.txns);
+  const months = availableMonths();
   return `
     <div class="row" style="margin-bottom:12px">
       <select data-filter="month" aria-label="Month" class="grow">
-        <option value="all" ${filters.month === 'all' ? 'selected' : ''}>All time</option>
+        ${allowAll ? `<option value="all" ${filters.month === 'all' ? 'selected' : ''}>All time</option>` : ''}
         ${months.map((m) => `<option value="${m}" ${filters.month === m ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
       </select>
       ${state.accounts.length > 1 ? `
@@ -43,59 +47,138 @@ export function bindFilterBar(root: HTMLElement) {
   });
 }
 
-function tile(kind: Kind, label: string, value: number, sub: string, hero = false) {
-  return `<a class="tile${hero ? ' hero' : ''}" href="#txns" data-kind="${kind}">
-    <div class="label"><span class="dot" style="background:${kindVar(kind)}"></span>${esc(label)}</div>
-    <div class="value num">${inr(value)}</div>
-    <div class="sub">${esc(sub)}</div>
-  </a>`;
+const signed = (n: number) => `${n < 0 ? '−' : ''}${inr(Math.abs(n))}`;
+
+function meter(actual: number, expected: number, color: string): string {
+  if (expected <= 0) return '';
+  const pct = Math.min(actual / expected, 1.5);
+  return `<div class="meter" aria-hidden="true">
+    <div class="meter-fill" style="width:${(Math.min(pct, 1) / 1.5) * 100}%;background:${color}"></div>
+    ${pct > 1 ? `<div class="meter-over" style="left:${(1 / 1.5) * 100}%;width:${((pct - 1) / 1.5) * 100}%"></div>` : ''}
+    <div class="meter-target" style="left:${(1 / 1.5) * 100}%"></div>
+  </div>`;
+}
+
+function summaryCard(s: MonthSummary): string {
+  const { plan, actual } = s;
+  if (!s.planSet) {
+    return `<div class="card">
+      <h2>Your plan for ${esc(monthLabel(s.month))}</h2>
+      <p class="small muted">Add your income and how much you expect to spend and invest. The app then shows whether you overspent or saved.</p>
+      <button class="btn primary" data-plan>Set income &amp; targets</button>
+    </div>`;
+  }
+  const saved = s.saved >= 0;
+  const spendLine = plan.expectedSpend > 0
+    ? (s.spendOver > 0 ? `<span class="pill bad">▲ ${inr(s.spendOver)} over</span>` : `<span class="pill ok">▼ ${inr(-s.spendOver)} under</span>`)
+    : '<span class="pill">No target</span>';
+  const investLine = plan.expectedInvestment > 0
+    ? (s.investOver >= 0 ? `<span class="pill ok">✓ ${inr(s.investOver)} ahead</span>` : `<span class="pill warn">▼ ${inr(-s.investOver)} short</span>`)
+    : '<span class="pill">No target</span>';
+  const vsPlan = s.saved - s.plannedSaving;
+
+  return `<div class="card summary">
+    <div class="row between">
+      <span class="eyebrow">${esc(monthLabel(s.month))}</span>
+      <button class="link-btn" data-plan>Edit plan</button>
+    </div>
+    <div class="hero-num ${saved ? 'ok' : 'bad'}">${saved ? 'Saved' : 'Overspent'} <span class="num">${inr(Math.abs(s.saved))}</span></div>
+    <p class="small muted" style="margin:2px 0 14px">
+      Income ${inr(plan.income)} − spent ${inr(actual.spend)} − invested ${inr(actual.invested)}.
+      ${s.plannedSaving !== 0 || vsPlan !== 0 ? `You planned to save ${signed(s.plannedSaving)}, so you are <strong>${vsPlan >= 0 ? `${inr(vsPlan)} better` : `${inr(-vsPlan)} worse`}</strong> than plan.` : ''}
+    </p>
+    <div class="plan-row">
+      <div class="row between"><span><span class="dot" style="background:${kindVar('spend')}"></span> Spent</span>${spendLine}</div>
+      <div class="row between small muted"><span class="num">${inr(actual.spend)}</span><span class="num">of ${inr(plan.expectedSpend)} expected</span></div>
+      ${meter(actual.spend, plan.expectedSpend, kindVar('spend'))}
+    </div>
+    <div class="plan-row">
+      <div class="row between"><span><span class="dot" style="background:${kindVar('investment')}"></span> Invested</span>${investLine}</div>
+      <div class="row between small muted"><span class="num">${inr(actual.invested)}</span><span class="num">of ${inr(plan.expectedInvestment)} expected</span></div>
+      ${meter(actual.invested, plan.expectedInvestment, kindVar('investment'))}
+    </div>
+  </div>`;
+}
+
+function historyTable(rows: MonthSummary[]): string {
+  const withData = rows.filter((r) => r.planSet || r.actual.spend || r.actual.invested).reverse();
+  if (!withData.length) return '';
+  return `<div class="card">
+    <h2>Month by month</h2>
+    <div class="table-scroll"><table class="simple">
+      <tr><th>Month</th><th class="r">Income</th><th class="r">Spent</th><th class="r">Invested</th><th class="r">Saved</th></tr>
+      ${withData.map((r) => `<tr data-month="${r.month}" class="click${r.month === app.filters.month ? ' sel' : ''}">
+        <td>${esc(monthShort(r.month))}</td>
+        <td class="num r">${r.planSet ? inr(r.plan.income) : '—'}</td>
+        <td class="num r">${inr(r.actual.spend)}${r.planSet && r.plan.expectedSpend ? `<div class="tiny ${r.spendOver > 0 ? 'bad' : 'ok'}">${r.spendOver > 0 ? '+' : '−'}${inr(Math.abs(r.spendOver))}</div>` : ''}</td>
+        <td class="num r">${inr(r.actual.invested)}${r.planSet && r.plan.expectedInvestment ? `<div class="tiny ${r.investOver >= 0 ? 'ok' : 'bad'}">${r.investOver >= 0 ? '+' : '−'}${inr(Math.abs(r.investOver))}</div>` : ''}</td>
+        <td class="num r ${r.planSet ? (r.saved >= 0 ? 'ok' : 'bad') : ''}">${r.planSet ? signed(r.saved) : '—'}</td>
+      </tr>`).join('')}
+    </table></div>
+    <p class="tiny" style="margin:8px 0 0">Small figures show the difference from what you expected. Tap a month to open it.</p>
+  </div>`;
 }
 
 let monthDefaulted = false;
 
 export function renderDashboard(root: HTMLElement) {
   const { state, filters } = app;
-  if (!state.txns.length) {
-    root.innerHTML = `<h1>Expenses</h1>
+  if (!state.txns.length && !Object.keys(state.plans).length) {
+    root.innerHTML = `<h1>Overview</h1>
       <div class="card empty">
         <p style="font-size:17px;color:var(--text)"><strong>Upload your first statement</strong></p>
         <p>PDF or Excel from HDFC, ICICI and most other banks. Everything stays on this device.</p>
-        <a class="btn primary" href="#upload" style="display:inline-block;text-decoration:none">Upload statement</a>
+        <div class="row" style="justify-content:center;gap:8px;flex-wrap:wrap">
+          <a class="btn primary" href="#upload" style="text-decoration:none">Upload statement</a>
+          <button class="btn" data-plan>Set income &amp; targets</button>
+        </div>
       </div>`;
+    root.querySelector('[data-plan]')!.addEventListener('click', () => openPlanSheet(currentMonth()));
     return;
   }
-  // Default to the latest month with data.
-  if (!monthDefaulted) {
-    filters.month = monthsOf(state.txns)[0] ?? 'all';
+  const months = availableMonths();
+  // The overview is always about one month: default to the latest with transactions.
+  if (!monthDefaulted || filters.month === 'all' || !months.includes(filters.month)) {
+    const latestWithData = [...state.txns].map((t) => t.date.slice(0, 7)).sort().pop();
+    filters.month = latestWithData ?? months[0];
     monthDefaulted = true;
   }
-  const txns = applyFilters(state.txns, filters, { kind: false });
-  const of = (k: Kind, dir?: 'debit' | 'credit') => txns.filter((t) => t.kind === k && (!dir || t.direction === dir));
-
+  const month = filters.month;
+  const scoped = applyFilters(state.txns, { ...filters, month: 'all' }, { kind: false });
+  const history = monthRange(state).slice(-12).map((m) => summarize(state, m, scoped));
+  const s = summarize(state, month, scoped);
+  const txns = scoped.filter((t) => t.date.startsWith(month));
+  const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir);
   const spend = of('spend', 'debit');
-  const refunds = of('spend', 'credit');
-  const income = of('income', 'credit');
-  const invested = of('investment', 'debit');
-  const redeemed = of('investment', 'credit');
-  const transfers = of('transfer', 'debit');
-  const ccBills = of('cc_bill', 'debit');
   const review = txns.filter((t) => t.category === 'Uncategorised');
-
   const spendCats = byCategory(spend);
   const maxCat = spendCats[0]?.total ?? 1;
-  const totalSpend = sum(spend) - sum(refunds);
-  const invCats = byCategory([...invested, ...redeemed].map((t) => ({ ...t, amount: t.direction === 'debit' ? t.amount : -t.amount })));
+  const spendTotal = spendCats.reduce((a, c) => a + c.total, 0) || 1;
+  const invCats = byCategory([...of('investment', 'debit'), ...of('investment', 'credit')]
+    .map((t) => ({ ...t, amount: t.direction === 'debit' ? t.amount : -t.amount })));
+
+  const points = (pick: (r: MonthSummary) => [number, number]): MonthPoint[] =>
+    history.map((r) => { const [actual, expected] = pick(r); return { month: r.month, actual, expected, planSet: r.planSet }; });
 
   root.innerHTML = `
-    <h1>Expenses</h1>
-    ${filterBar()}
+    <h1>Overview</h1>
+    ${filterBar(false)}
     ${review.length ? `<a class="banner" href="#txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
+    ${summaryCard(s)}
+
+    ${history.length > 1 || s.planSet ? `<div class="card">
+      <h2>Spending by month</h2>
+      ${monthlyChart(points((r) => [Math.max(r.actual.spend, 0), r.plan.expectedSpend]), month, kindVar('spend'), 'Spent')}
+      <h2 style="margin-top:16px">Investing by month</h2>
+      ${monthlyChart(points((r) => [r.actual.invested, r.plan.expectedInvestment]), month, kindVar('investment'), 'Invested')}
+      <p class="tiny" style="margin:6px 0 0">Tap a month to see it.</p>
+    </div>` : ''}
+
     <div class="tiles">
-      ${tile('spend', 'Spent', totalSpend, `${spend.length} payments${refunds.length ? ` · ${inr(sum(refunds))} refunded` : ''}`, true)}
-      ${tile('income', 'Income', sum(income), `${income.length} credits`)}
-      ${tile('investment', 'Invested', sum(invested), redeemed.length ? `${inr(sum(redeemed))} redeemed` : `${invested.length} investments`)}
-      ${tile('transfer', 'Self transfers', sum(transfers), 'Between your accounts')}
-      ${tile('cc_bill', 'Card bills paid', sum(ccBills), 'Not counted as spend')}
+      <a class="tile" href="#txns" data-kind="transfer"><div class="label"><span class="dot" style="background:${kindVar('transfer')}"></span>Self transfers</div><div class="value num">${inr(s.actual.transfers)}</div><div class="sub">Not spend</div></a>
+      <a class="tile" href="#txns" data-kind="cc_bill"><div class="label"><span class="dot" style="background:${kindVar('cc_bill')}"></span>Card bills paid</div><div class="value num">${inr(s.actual.cardBills)}</div><div class="sub">Not spend</div></a>
+      ${s.actual.redeemed ? `<a class="tile" href="#txns" data-kind="investment"><div class="label"><span class="dot" style="background:${kindVar('investment')}"></span>Redeemed</div><div class="value num">${inr(s.actual.redeemed)}</div><div class="sub">Sold investments</div></a>` : ''}
+      ${s.actual.credits ? `<a class="tile" href="#txns" data-kind="income"><div class="label"><span class="dot" style="background:${kindVar('income')}"></span>Credits in statement</div><div class="value num">${inr(s.actual.credits)}</div><div class="sub">Your income entry is used instead</div></a>` : ''}
     </div>
 
     <div class="card">
@@ -104,29 +187,35 @@ export function renderDashboard(root: HTMLElement) {
         ${spendCats.map((c) => `
           <a class="bar-row" href="#txns" data-kind="spend" data-category="${esc(c.category)}">
             <div class="top"><span class="ellipsis">${esc(c.category)} <span class="tiny">· ${c.count}</span></span>
-            <span class="num">${inr(c.total)} <span class="tiny">${Math.round((c.total / (sum(spend) || 1)) * 100)}%</span></span></div>
+            <span class="num">${inr(c.total)} <span class="tiny">${Math.round((c.total / spendTotal) * 100)}%</span></span></div>
             <div class="bar-track"><div class="bar-fill" style="width:${(c.total / maxCat) * 100}%"></div></div>
           </a>`).join('')}
-      </div>` : '<p class="muted">No spending in this period.</p>'}
+      </div>` : '<p class="muted">No spending in this month.</p>'}
     </div>
 
     ${invCats.length ? `<div class="card">
       <h2>Investments</h2>
       <table class="simple">
-        <tr><th>Category</th><th style="text-align:right">Net invested</th></tr>
-        ${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}" style="color:inherit">${esc(c.category)}</a></td><td class="num" style="text-align:right">${c.total < 0 ? '−' : ''}${inr(Math.abs(c.total))}</td></tr>`).join('')}
+        <tr><th>Category</th><th class="r">Net invested</th></tr>
+        ${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}" style="color:inherit">${esc(c.category)}</a></td><td class="num r">${signed(c.total)}</td></tr>`).join('')}
       </table>
       <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>
     </div>` : ''}
 
-    <p class="tiny" style="text-align:center">${esc(monthLabel(filters.month))} · ${txns.length} transactions</p>
+    ${historyTable(history)}
   `;
   bindFilterBar(root);
+  root.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', () => openPlanSheet(month)));
+  root.querySelectorAll<HTMLElement>('[data-month]').forEach((el) => {
+    const pick = () => { filters.month = el.dataset.month!; render(); };
+    el.addEventListener('click', pick);
+    el.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') pick(); });
+  });
   root.querySelectorAll<HTMLElement>('[data-kind]').forEach((el) => {
     el.addEventListener('click', (e) => {
       e.preventDefault();
-      app.filters.kind = el.dataset.kind as Kind | 'review';
-      app.filters.category = el.dataset.category ?? '';
+      filters.kind = el.dataset.kind as Kind | 'review';
+      filters.category = el.dataset.category ?? '';
       navigate('#txns');
     });
   });

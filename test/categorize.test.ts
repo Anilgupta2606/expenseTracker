@@ -86,7 +86,7 @@ describe('extractMerchant', () => {
 });
 
 describe('pairTransfers', () => {
-  const base = { description: 'x', merchantKey: 'k', merchantName: 'x', importedAt: 0, source: 'default' as const };
+  const base = { description: 'x', merchantKey: 'k', merchantName: 'x', importedAt: 0, importId: 'i1', source: 'default' as const };
   it('links money out of one account and into another', () => {
     const txns: Txn[] = [
       { ...base, id: 'a', accountId: 'HDFC-1234', date: '2026-07-01', amount: 5000, direction: 'debit', kind: 'spend', category: 'Uncategorised' },

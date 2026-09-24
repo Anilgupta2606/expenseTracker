@@ -6,7 +6,9 @@ A private expense tracker that runs in your phone's browser. Upload a bank state
 - sorts each row into **Spend**, **Income**, **Investment**, **Self transfer** or **Card bill**, with a category (Food & Dining, Mutual Funds, Salary, …);
 - keeps investments, self transfers and credit card bill payments **out of your spend**;
 - learns from your corrections ("always use this for Swiggy");
-- optionally asks Claude to categorise rows its rules couldn't match (your own API key).
+- lets you set your **monthly income, expected spend and expected investment**, then tells you whether you **saved or overspent** (income − spend − investment), with month-by-month charts and history;
+- groups transactions by date or by category;
+- keeps a list of uploaded statements, and deleting one removes its transactions.
 
 Everything is processed and stored **on your device** (IndexedDB). Statements are never uploaded anywhere.
 
@@ -27,7 +29,14 @@ Password-protected PDFs are supported: the app asks for the password.
 3. **Self transfers** — a transfer narration containing your name (auto-detected from the statement, editable in Settings), a family member you add, or your other account's last 4 digits. Money leaving one of your accounts and arriving in another within 3 days is also paired as a self transfer.
 4. **Merchant rules** — ~200 Indian merchants and keywords (Swiggy, Blinkit, Airtel, Netflix, IRCTC, pharmacies, fuel, CBDT tax, GST charges…).
 5. **People vs shops** — UPI payments to a phone number or a person's name become "Payments to People"; shop QR codes (paytmqr, BharatPe, …) with no known merchant are marked **Needs category**.
-6. **AI (optional)** — Settings → AI categorisation sends only the narration, amount and direction of uncategorised rows to Claude. It needs an API key from [console.anthropic.com](https://console.anthropic.com) (API credits are billed separately from a Claude subscription).
+
+## Monthly plan
+
+On the Overview, tap **Edit plan** to enter the month's income, expected spend and expected investment. A plan carries forward to new months until you change it, and earlier months keep their own numbers, so history stays accurate. Income comes only from your entry; credits found in statements (salary, refunds, dividends) are shown but not used for the calculation.
+
+- **Spent** = spend-type debits minus refunds (self transfers, card bill payments and investments are excluded).
+- **Invested** = money put into investments that month (redemptions are shown separately).
+- **Saved** = income − spent − invested. Negative means you overspent.
 
 ## Install on iPhone
 
@@ -56,7 +65,7 @@ Code map:
 
 - `src/parse/layout.ts` — turns positioned PDF text into table rows (column detection, wrapped narrations, balance-based direction check).
 - `src/parse/sheet.ts` — Excel/CSV header detection.
-- `src/categorize/rules.ts` — keyword rules; `engine.ts` — categorisation order, merchant extraction, transfer pairing; `ai.ts` — optional Claude categorisation.
+- `src/categorize/rules.ts` — keyword rules; `engine.ts` — categorisation order, merchant extraction, transfer pairing; `src/plans.ts` — monthly plans, carry-forward and saved/overspent maths.
 - `src/ui/` — screens (Overview, Transactions, Upload, Settings).
 
 Never commit real statements — `*.pdf`, `*.xls*` and `*.csv` are git-ignored.

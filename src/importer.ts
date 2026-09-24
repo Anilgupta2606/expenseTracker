@@ -1,4 +1,4 @@
-import type { Account, AppState, ParseResult, Txn } from './types';
+import type { Account, AppState, ParseResult, StatementImport, Txn } from './types';
 import { categorize, extractMerchant, pairTransfers, type Context } from './categorize/engine';
 import { hash } from './parse/util';
 
@@ -10,6 +10,7 @@ export interface ImportPreview {
   duplicates: number;
   /** Earlier transactions that got paired with this statement. */
   updated: Txn[];
+  record: StatementImport;
 }
 
 export async function parseFile(file: File, password?: string): Promise<ParseResult> {
@@ -49,6 +50,7 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   const ctx = contextFor(state, account);
   const existing = new Set(state.txns.map((t) => t.id));
   const now = Date.now();
+  const importId = `${account.id}-${now}-${hash(fileName)}`;
   const fresh: Txn[] = [];
   let duplicates = 0;
   result.txns.forEach((p, i) => {
@@ -62,27 +64,40 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
       kind: c.kind, category: c.category, source: c.source,
       merchantKey: merchant.key, merchantName: merchant.name,
       importedAt: now,
+      importId,
     });
   });
   // Pair within this statement and against earlier imports (on copies, until committed).
   const earlier = state.txns.map((t) => ({ ...t }));
   pairTransfers([...earlier, ...fresh]);
   const updated = earlier.filter((t, i) => t.pairId !== state.txns[i].pairId);
-  return { result, account, isNewAccount: isNew, fresh, duplicates, updated };
+  const dates = fresh.map((t) => t.date).sort();
+  const record: StatementImport = { id: importId, fileName, accountId: account.id, from: dates[0] ?? '', to: dates[dates.length - 1] ?? '', importedAt: now };
+  return { result, account, isNewAccount: isNew, fresh, duplicates, updated, record };
 }
 
 export function commitPreview(state: AppState, preview: ImportPreview): AppState {
   const accounts = preview.isNewAccount ? [...state.accounts, preview.account] : state.accounts;
   const changed = new Map(preview.updated.map((t) => [t.id, t]));
   const txns = [...state.txns.map((t) => changed.get(t.id) ?? t), ...preview.fresh].sort((a, b) => b.date.localeCompare(a.date));
-  return { ...state, accounts, txns };
+  const imports = preview.fresh.length ? [...state.imports, preview.record] : state.imports;
+  return { ...state, accounts, txns, imports };
+}
+
+/** Removes an uploaded statement and every transaction that came from it. */
+export function deleteImport(state: AppState, importId: string): AppState {
+  const imports = state.imports.filter((i) => i.id !== importId);
+  const txns = state.txns.filter((t) => t.importId !== importId);
+  // Drop accounts that no longer have any statements.
+  const accounts = state.accounts.filter((a) => txns.some((t) => t.accountId === a.id));
+  return recategorizeAll({ ...state, imports, txns, accounts });
 }
 
 /** Re-runs categorisation for everything the user hasn't set by hand. */
 export function recategorizeAll(state: AppState): AppState {
   const ctx = contextFor(state);
   const txns = state.txns.map((t) => {
-    if (t.source === 'manual' || t.source === 'ai') return t;
+    if (t.source === 'manual') return t;
     const merchant = extractMerchant(t.description);
     const c = categorize(t, merchant, ctx, t.accountId);
     return { ...t, kind: c.kind, category: c.category, source: c.source, pairId: undefined, merchantKey: merchant.key, merchantName: merchant.name };

@@ -7,11 +7,12 @@ export interface Filters {
   kind: Kind | 'all' | 'review';
   category: string; // '' = any
   search: string;
+  groupBy: 'date' | 'category';
 }
 
 export const app = {
   state: emptyState(),
-  filters: { month: 'all', account: 'all', kind: 'all', category: '', search: '' } as Filters,
+  filters: { month: 'all', account: 'all', kind: 'all', category: '', search: '', groupBy: 'date' } as Filters,
 };
 
 let renderFn: () => void = () => {};
@@ -43,15 +44,6 @@ export function toast(message: string) {
   clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => el.remove(), 3500);
 }
-
-/** True when running inside another page's frame (e.g. a hosted preview). */
-export const embedded = (() => {
-  try {
-    return window.top !== window;
-  } catch {
-    return true;
-  }
-})();
 
 /** In-page confirmation; native confirm() is blocked in some embedded viewers. */
 export function askConfirm(message: string, confirmLabel: string, danger = true): Promise<boolean> {

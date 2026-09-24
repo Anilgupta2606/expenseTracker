@@ -1,22 +1,17 @@
-import type { AppState } from './types';
+import type { AppState, StatementImport } from './types';
 
 const DB_NAME = 'expense-tracker';
 const STORE = 'kv';
 const KEY = 'state';
-
-export const AI_MODELS = [
-  { id: 'claude-opus-5', label: 'Claude Opus 5 (most accurate)' },
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 (cheapest)' },
-];
-export const DEFAULT_MODEL = AI_MODELS[0].id;
 
 export function emptyState(): AppState {
   return {
     accounts: [],
     txns: [],
     rules: [],
-    settings: { ownNames: [], familyNames: [], aiModel: DEFAULT_MODEL },
+    settings: { ownNames: [], familyNames: [] },
+    plans: {},
+    imports: [],
   };
 }
 
@@ -37,8 +32,7 @@ export async function loadState(): Promise<AppState> {
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
-    const base = emptyState();
-    return value ? { ...base, ...value, settings: { ...base.settings, ...value.settings } } : base;
+    return value ? migrate(value) : emptyState();
   } catch {
     return emptyState();
   }
@@ -61,4 +55,29 @@ export async function requestPersistence(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Brings data saved by older versions up to the current shape. */
+export function migrate(value: Partial<AppState>): AppState {
+  const base = emptyState();
+  const { aiApiKey: _k, aiModel: _m, ...settings } = (value.settings ?? {}) as AppState['settings'] & { aiApiKey?: string; aiModel?: string };
+  const state: AppState = { ...base, ...value, settings: { ...base.settings, ...settings } } as AppState;
+  state.plans ??= {};
+  state.imports ??= [];
+  // Older data has no upload records: rebuild one per account and upload time.
+  const missing = state.txns.filter((t) => !t.importId);
+  if (missing.length) {
+    const groups = new Map<string, StatementImport>();
+    state.txns = state.txns.map((t) => {
+      if (t.importId) return t;
+      const id = `${t.accountId}-${t.importedAt}`;
+      const g = groups.get(id) ?? { id, fileName: `${t.accountId} statement`, accountId: t.accountId, from: t.date, to: t.date, importedAt: t.importedAt };
+      if (t.date < g.from) g.from = t.date;
+      if (t.date > g.to) g.to = t.date;
+      groups.set(id, g);
+      return { ...t, importId: id };
+    });
+    state.imports = [...state.imports, ...groups.values()];
+  }
+  return state;
 }

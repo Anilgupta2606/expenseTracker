@@ -1,7 +1,7 @@
 import type { AppState } from '../types';
 import { recategorizeAll } from '../importer';
-import { AI_MODELS, emptyState } from '../store';
-import { app, askConfirm, embedded, render, toast, update } from './app';
+import { emptyState, migrate } from '../store';
+import { app, askConfirm, toast, update } from './app';
 import { esc } from './format';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
@@ -21,8 +21,6 @@ function toCsv(state: AppState): string {
   }
   return rows.map((r) => r.map(q).join(',')).join('\n');
 }
-
-let aiStatus = '';
 
 export function renderSettings(root: HTMLElement) {
   const { state } = app;
@@ -63,21 +61,6 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
-      <h2>AI categorisation (optional)</h2>
-      ${embedded ? '<p class="small bad">This hosted copy cannot reach the Claude API. Use the app from its own website (see README) to turn this on.</p>' : ''}
-      <p class="small muted" style="margin-top:-4px">Sends only the narration, amount and direction of <em>uncategorised</em> rows to Claude with your own API key. This uses API credits from console.anthropic.com, which are separate from a Claude subscription. The key is stored only on this device.</p>
-      <label class="field"><span>Claude API key</span>
-        <input type="password" id="key" value="${esc(s.aiApiKey ?? '')}" placeholder="sk-ant-…" autocomplete="off"></label>
-      <label class="field"><span>Model</span>
-        <select id="model">${AI_MODELS.map((m) => `<option value="${m.id}" ${m.id === s.aiModel ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></label>
-      <div class="row wrap">
-        <button class="btn" id="save-ai">Save key</button>
-        <button class="btn primary" id="run-ai" ${!s.aiApiKey || !review.length ? 'disabled' : ''}>Categorise ${review.length} with AI</button>
-      </div>
-      ${aiStatus ? `<p class="small">${esc(aiStatus)}</p>` : ''}
-    </div>
-
-    <div class="card">
       <h2>Your data</h2>
       <p class="small muted" style="margin-top:-4px">Stored only in this browser. Export a backup now and then, especially before clearing Safari data.</p>
       <div class="row wrap">
@@ -90,7 +73,7 @@ export function renderSettings(root: HTMLElement) {
       </div>
       <textarea id="backup-text" rows="4" hidden style="margin-top:10px;font-size:12px"></textarea>
     </div>
-    <p class="tiny" style="text-align:center">Expense Tracker · all processing happens on your device</p>
+    <p class="tiny" style="text-align:center">Expense Tracker · everything stays on this device</p>
   `;
 
   const val = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)!.value;
@@ -110,47 +93,17 @@ export function renderSettings(root: HTMLElement) {
   root.querySelectorAll<HTMLElement>('[data-del-account]').forEach((b) => b.addEventListener('click', async () => {
     const id = b.dataset.delAccount!;
     if (!(await askConfirm(`Delete ${id} and all its transactions?`, 'Delete account'))) return;
-    await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id) }));
+    await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id), imports: st.imports.filter((i) => i.accountId !== id) }));
   }));
-  root.querySelector('#save-ai')!.addEventListener('click', async () => {
-    await update((st) => ({ ...st, settings: { ...st.settings, aiApiKey: val('key').trim() || undefined, aiModel: val('model') } }));
-    toast('Saved');
-  });
-  root.querySelector('#run-ai')!.addEventListener('click', async () => {
-    const settings = { ...app.state.settings, aiApiKey: val('key').trim() || app.state.settings.aiApiKey, aiModel: val('model') };
-    try {
-      const { categorizeWithAI } = await import('../categorize/ai');
-      const suggestions = await categorizeWithAI(review, settings, (done, total) => {
-        aiStatus = `Working… ${done}/${total}`;
-        render();
-      });
-      const byId = new Map(suggestions.map((x) => [x.id, x]));
-      await update((st) => ({
-        ...st,
-        settings,
-        txns: st.txns.map((t) => {
-          const sgt = byId.get(t.id);
-          return sgt && t.category === 'Uncategorised' ? { ...t, kind: sgt.kind, category: sgt.category, source: 'ai' as const } : t;
-        }),
-      }));
-      aiStatus = `Categorised ${suggestions.length} of ${review.length}. Check them under Transactions — tap one to correct it.`;
-    } catch (e) {
-      aiStatus = (e as Error).message;
-    }
-    render();
-  });
   root.querySelector('#export')!.addEventListener('click', () => {
-    // The API key stays out of backups.
-    const { aiApiKey: _key, ...settings } = app.state.settings;
-    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify({ ...app.state, settings }));
+    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify(app.state));
   });
   const restoreFrom = async (textData: string) => {
     try {
       const data = JSON.parse(textData) as AppState;
       if (!Array.isArray(data.txns) || !Array.isArray(data.accounts)) throw new Error('Not a backup file');
       if (!(await askConfirm(`Replace current data with ${data.txns.length} transactions from the backup?`, 'Restore', false))) return;
-      const base = emptyState();
-      await update((st) => ({ ...base, ...data, settings: { ...base.settings, ...data.settings, aiApiKey: st.settings.aiApiKey } }));
+      await update(() => migrate(data));
       toast('Backup restored');
     } catch (err) {
       toast(`Could not restore: ${(err as Error).message}`);
@@ -161,8 +114,7 @@ export function renderSettings(root: HTMLElement) {
     if (file) await restoreFrom(await file.text());
   });
   root.querySelector('#copy-backup')!.addEventListener('click', async () => {
-    const { aiApiKey: _key, ...settings } = app.state.settings;
-    const json = JSON.stringify({ ...app.state, settings });
+    const json = JSON.stringify(app.state);
     try {
       await navigator.clipboard.writeText(json);
       toast('Backup copied. Paste it into Notes or a file to keep it.');
@@ -189,7 +141,7 @@ export function renderSettings(root: HTMLElement) {
     download(`expenses-${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv', toCsv(app.state));
   });
   root.querySelector('#wipe')!.addEventListener('click', async () => {
-    if (!(await askConfirm('Delete all accounts, transactions and rules from this device?', 'Delete everything'))) return;
+    if (!(await askConfirm('Delete all accounts, transactions, monthly plans and rules from this device?', 'Delete everything'))) return;
     await update(() => emptyState());
     toast('All data deleted');
   });

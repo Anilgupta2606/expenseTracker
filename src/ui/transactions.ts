@@ -16,7 +16,7 @@ export function txnRow(t: Txn): string {
       <div class="name ellipsis">${esc(t.merchantName)}</div>
       <div class="meta ellipsis">
         <span class="badge${review ? ' warn' : ''}">${esc(review ? 'Needs category' : t.category)}</span>
-        ${esc(KIND_LABEL[t.kind])}${account && app.state.accounts.length > 1 ? ` · ${esc(account.bank)}` : ''}${t.source === 'ai' ? ' · AI' : ''}
+        ${esc(KIND_LABEL[t.kind])}${account && app.state.accounts.length > 1 ? ` · ${esc(account.bank)}` : ''}
       </div>
     </span>
     <span class="num amt ${t.direction}">${t.direction === 'credit' ? '+' : '−'}${inrFull(t.amount)}</span>
@@ -28,6 +28,14 @@ export function renderTransactions(root: HTMLElement) {
   const txns = applyFilters(state.txns, filters);
   const byDay = new Map<string, Txn[]>();
   for (const t of txns) byDay.set(t.date, [...(byDay.get(t.date) ?? []), t]);
+  // Category groups: biggest money movement first, each with its subtotal.
+  const byCat = new Map<string, Txn[]>();
+  for (const t of txns) {
+    const key = `${KIND_LABEL[t.kind]} · ${t.category}`;
+    byCat.set(key, [...(byCat.get(key) ?? []), t]);
+  }
+  const net = (list: Txn[]) => list.reduce((a, t) => a + (t.direction === 'debit' ? -t.amount : t.amount), 0);
+  const catGroups = [...byCat.entries()].sort((a, b) => Math.abs(net(b[1])) - Math.abs(net(a[1])));
   const out = txns.filter((t) => t.direction === 'debit').reduce((a, t) => a + t.amount, 0);
   const inn = txns.filter((t) => t.direction === 'credit').reduce((a, t) => a + t.amount, 0);
 
@@ -39,13 +47,21 @@ export function renderTransactions(root: HTMLElement) {
       ${KIND_CHIPS.map((k) => `<button class="chip${filters.kind === k && !filters.category ? ' on' : ''}" data-kind="${k}">${k === 'all' ? 'All' : k === 'review' ? 'Needs review' : esc(KIND_LABEL[k])}</button>`).join('')}
       ${filters.category ? `<button class="chip on" data-kind="${filters.kind}" data-clear-cat>${esc(filters.category)} ✕</button>` : ''}
     </div>
-    <div class="row between small muted" style="margin:0 4px 4px">
-      <span>${txns.length} transactions</span>
-      <span class="num">Out ${inrFull(out)} · In ${inrFull(inn)}</span>
+    <div class="row between small muted wrap" style="margin:0 4px 4px">
+      <span>${txns.length} transactions · <span class="num">Out ${inrFull(out)} · In ${inrFull(inn)}</span></span>
+      <span class="seg-toggle" role="group" aria-label="Group by">
+        <button data-group="date" class="${filters.groupBy === 'date' ? 'on' : ''}">By date</button>
+        <button data-group="category" class="${filters.groupBy === 'category' ? 'on' : ''}">By category</button>
+      </span>
     </div>
-    ${txns.length ? [...byDay.entries()].map(([day, list]) => `
-      <div class="day">${esc(dayLabel(day))}</div>
-      <div class="list">${list.map(txnRow).join('')}</div>`).join('') : '<div class="card empty">No transactions match.</div>'}
+    ${!txns.length ? '<div class="card empty">No transactions match.</div>'
+      : filters.groupBy === 'category'
+        ? catGroups.map(([cat, list]) => `
+          <div class="cat-head"><span>${esc(cat)} <span class="tiny">· ${list.length}</span></span><span class="num">${net(list) < 0 ? '−' : '+'}${inrFull(Math.abs(net(list)))}</span></div>
+          <div class="list">${list.map(txnRow).join('')}</div>`).join('')
+        : [...byDay.entries()].map(([day, list]) => `
+          <div class="day">${esc(dayLabel(day))}</div>
+          <div class="list">${list.map(txnRow).join('')}</div>`).join('')}
   `;
   bindFilterBar(root);
   const search = root.querySelector<HTMLInputElement>('#search')!;
@@ -57,6 +73,10 @@ export function renderTransactions(root: HTMLElement) {
     again?.focus();
     again?.setSelectionRange(pos, pos);
   });
+  root.querySelectorAll<HTMLElement>('[data-group]').forEach((el) => el.addEventListener('click', () => {
+    filters.groupBy = el.dataset.group as Filters['groupBy'];
+    render();
+  }));
   root.querySelectorAll<HTMLElement>('.chip').forEach((el) => el.addEventListener('click', () => {
     filters.kind = el.dataset.kind as Filters['kind'];
     filters.category = '';

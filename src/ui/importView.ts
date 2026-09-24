@@ -1,10 +1,10 @@
 import type { Kind } from '../types';
 import { KIND_LABEL } from '../categorize/categories';
-import { buildPreview, commitPreview, parseFile, recategorizeAll, type ImportPreview } from '../importer';
+import { buildPreview, commitPreview, deleteImport, parseFile, recategorizeAll, type ImportPreview } from '../importer';
 import { PasswordNeededError } from '../parse/errors';
 import { requestPersistence } from '../store';
-import { app, navigate, render, toast, update } from './app';
-import { esc, inr, kindVar } from './format';
+import { app, askConfirm, navigate, render, toast, update } from './app';
+import { dayLabel, esc, inr, kindVar } from './format';
 import { txnRow } from './transactions';
 
 interface Pending { file: File; preview?: ImportPreview; error?: string; needsPassword?: boolean; wrongPassword?: boolean }
@@ -76,6 +76,25 @@ function previewCard(p: Pending, i: number): string {
   </div>`;
 }
 
+function uploadedList(): string {
+  const { imports, txns, accounts } = app.state;
+  if (!imports.length) return '';
+  const rows = [...imports].sort((a, b) => b.importedAt - a.importedAt);
+  return `<h2 style="margin:22px 4px 8px">Uploaded statements</h2>
+    <div class="list">${rows.map((r) => {
+      const acc = accounts.find((a) => a.id === r.accountId);
+      const n = txns.filter((t) => t.importId === r.id).length;
+      return `<div class="txn" style="cursor:default">
+        <span class="grow">
+          <div class="name ellipsis">${esc(r.fileName)}</div>
+          <div class="meta">${esc(acc ? `${acc.bank} ••${acc.number.slice(-4)}` : r.accountId)} · ${esc(r.from)} to ${esc(r.to)} · ${n} rows<br>Uploaded ${esc(dayLabel(new Date(r.importedAt).toISOString().slice(0, 10)))}</div>
+        </span>
+        <button class="btn danger" data-del-import="${esc(r.id)}">Delete</button>
+      </div>`;
+    }).join('')}</div>
+    <p class="tiny" style="margin:8px 4px">Deleting a statement removes its transactions from every screen. You can upload it again later.</p>`;
+}
+
 export function renderImport(root: HTMLElement) {
   const ready = pending.filter((p) => p.preview && p.preview.fresh.length);
   root.innerHTML = `
@@ -90,7 +109,16 @@ export function renderImport(root: HTMLElement) {
     ${pending.map(previewCard).join('')}
     ${ready.length ? `<button class="btn primary block" id="save">Save ${ready.reduce((a, p) => a + p.preview!.fresh.length, 0)} transactions</button>` : ''}
     ${pending.length && !ready.length && !busy && pending.every((p) => p.preview) ? '<p class="muted small">Nothing new to save.</p>' : ''}
+    ${uploadedList()}
   `;
+  root.querySelectorAll<HTMLElement>('[data-del-import]').forEach((b) => b.addEventListener('click', async () => {
+    const rec = app.state.imports.find((i) => i.id === b.dataset.delImport);
+    if (!rec) return;
+    const n = app.state.txns.filter((t) => t.importId === rec.id).length;
+    if (!(await askConfirm(`Delete "${rec.fileName}" and its ${n} transactions? Your monthly plans and learned rules stay.`, 'Delete statement'))) return;
+    await update((s) => deleteImport(s, rec.id));
+    toast('Statement deleted');
+  }));
 
   root.querySelector<HTMLInputElement>('#file')!.addEventListener('change', async (e) => {
     const files = [...((e.target as HTMLInputElement).files ?? [])];

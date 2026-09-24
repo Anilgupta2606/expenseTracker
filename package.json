@@ -27,7 +27,6 @@
     "vitest": "^5.0.1"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.128.0",
     "pdfjs-dist": "^4.10.38",
     "xlsx": "^0.18.5"
   },

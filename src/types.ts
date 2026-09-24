@@ -2,7 +2,7 @@ export type Kind = 'spend' | 'income' | 'investment' | 'transfer' | 'cc_bill';
 export type Direction = 'debit' | 'credit';
 
 /** Where a transaction's category came from, strongest last. */
-export type CategorySource = 'default' | 'rule' | 'self' | 'pair' | 'ai' | 'learned' | 'manual';
+export type CategorySource = 'default' | 'rule' | 'self' | 'pair' | 'learned' | 'manual';
 
 export interface ParsedTxn {
   date: string; // YYYY-MM-DD
@@ -39,6 +39,8 @@ export interface Txn extends ParsedTxn {
   pairId?: string;
   note?: string;
   importedAt: number;
+  /** The uploaded statement this row came from. */
+  importId: string;
 }
 
 export interface Account {
@@ -62,8 +64,23 @@ export interface Settings {
   ownNames: string[];
   /** People whose transfers count as self transfers (e.g. spouse). */
   familyNames: string[];
-  aiApiKey?: string;
-  aiModel: string;
+}
+
+/** Your own numbers for a month. Months without one inherit the latest earlier month. */
+export interface MonthPlan {
+  income: number;
+  expectedSpend: number;
+  expectedInvestment: number;
+}
+
+/** One uploaded statement file. */
+export interface StatementImport {
+  id: string;
+  fileName: string;
+  accountId: string;
+  from: string; // YYYY-MM-DD
+  to: string;
+  importedAt: number;
 }
 
 export interface AppState {
@@ -71,4 +88,7 @@ export interface AppState {
   txns: Txn[];
   rules: LearnedRule[];
   settings: Settings;
+  /** Keyed by YYYY-MM. */
+  plans: Record<string, MonthPlan>;
+  imports: StatementImport[];
 }
