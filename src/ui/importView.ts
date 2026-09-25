@@ -249,6 +249,27 @@ function uploadedList(): string {
     <p class="tiny" style="margin:8px 4px"><strong>Rescan</strong> reads the file again with several settings and adds any rows that were missed; your changes to existing rows stay. <strong>AI check</strong> (optional, free Gemini key in Settings) suggests payee names and categories for you to review. <strong>Delete</strong> removes the statement and its transactions.</p>`;
 }
 
+const STATEMENT_TYPES = /\.(pdf|xlsx?|csv)$/i;
+
+/**
+ * Reads statement files however they arrive: the file picker, a drag onto
+ * the page (laptop), or the Share sheet (Android). Other file types are skipped.
+ */
+export async function addFiles(files: File[]) {
+  const usable = files.filter((f) => STATEMENT_TYPES.test(f.name) || f.type === 'application/pdf');
+  if (usable.length < files.length) toast(`Skipped ${files.length - usable.length} file(s) that aren't PDF, Excel or CSV statements.`);
+  if (!usable.length) return;
+  busy = true;
+  render();
+  for (const file of usable) {
+    const p: Pending = { file };
+    pending.push(p);
+    await processFile(p);
+  }
+  busy = false;
+  render();
+}
+
 export function renderImport(root: HTMLElement) {
   const ready = pending.filter((p) => p.preview && p.preview.fresh.length);
   root.innerHTML = `
@@ -257,6 +278,7 @@ export function renderImport(root: HTMLElement) {
       <input type="file" id="file" accept=".pdf,.xls,.xlsx,.csv,application/pdf" multiple>
       <div style="font-size:17px;font-weight:600">Choose statements</div>
       <div class="small muted">PDF, Excel (.xls/.xlsx) or CSV · several at once is fine</div>
+      <div class="tiny drop-hint">On a laptop, drag files from Mail or Finder anywhere onto this page. On iPhone, save a Mail attachment to Files first, then choose it here.</div>
     </label>
     <p class="tiny" style="margin:8px 4px 14px">Files are read on this device and never uploaded anywhere.</p>
     ${busy ? `<div class="work-note" role="status" style="margin:0 0 12px"><span class="spinner"></span><div class="grow">${esc(readingNote || 'Reading…')}</div></div>` : ''}
@@ -277,18 +299,8 @@ export function renderImport(root: HTMLElement) {
   root.querySelectorAll<HTMLElement>('[data-rescan]').forEach((b) => b.addEventListener('click', () => void rescan(b.dataset.rescan!)));
   root.querySelectorAll<HTMLElement>('[data-aicheck]').forEach((b) => b.addEventListener('click', () => void aiCheck(b.dataset.aicheck!)));
 
-  root.querySelector<HTMLInputElement>('#file')!.addEventListener('change', async (e) => {
-    const files = [...((e.target as HTMLInputElement).files ?? [])];
-    if (!files.length) return;
-    busy = true;
-    render();
-    for (const file of files) {
-      const p: Pending = { file };
-      pending.push(p);
-      await processFile(p);
-    }
-    busy = false;
-    render();
+  root.querySelector<HTMLInputElement>('#file')!.addEventListener('change', (e) => {
+    void addFiles([...((e.target as HTMLInputElement).files ?? [])]);
   });
   // Tick or untick "Counted" before saving the statement.
   root.querySelectorAll<HTMLInputElement>('input[data-counted]').forEach((box) => box.addEventListener('change', () => {
