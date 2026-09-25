@@ -51,25 +51,44 @@ export function hash(s: string): string {
   return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
 }
 
-export function detectBank(text: string): string {
+const BANKS: [string, RegExp, string][] = [
+  ['HDFC', /HDFC BANK/, 'HDFC'],
+  ['ICICI', /ICICI BANK|ICICI\.BANK/, 'ICIC'],
+  ['SBI', /STATE BANK OF INDIA|\bSBI\b/, 'SBIN'],
+  ['Axis', /AXIS BANK/, 'UTIB'],
+  ['Kotak', /KOTAK MAHINDRA/, 'KKBK'],
+  ['IDFC', /IDFC FIRST/, 'IDFB'],
+  ['Yes', /YES BANK LIMITED/, 'YESB'],
+  ['PNB', /PUNJAB NATIONAL BANK/, 'PUNB'],
+  ['BoB', /BANK OF BARODA/, 'BARB'],
+  ['IndusInd', /INDUSIND/, 'INDB'],
+  ['AU', /AU SMALL FINANCE/, 'AUBL'],
+  ['Federal', /FEDERAL BANK/, 'FDRL'],
+];
+
+/**
+ * Which bank issued the statement. The header (everything above the
+ * transactions table) decides: first its IFSC code, then the first bank it
+ * names. Narrations name other banks all the time (an ICICI statement can say
+ * "HDFC Bank" more often than "ICICI Bank"), so counting over the whole text
+ * is only the last resort.
+ */
+export function detectBank(text: string, header = ''): string {
+  const h = header.toUpperCase();
+  const ifsc = h.match(/\b([A-Z]{4})0[A-Z0-9]{6}\b/g) ?? [];
+  for (const code of ifsc) {
+    const bank = BANKS.find(([, , prefix]) => code.startsWith(prefix));
+    if (bank) return bank[0];
+  }
+  let first = 'Unknown', firstAt = Infinity;
+  for (const [name, re] of BANKS) {
+    const at = h.search(re);
+    if (at >= 0 && at < firstAt) { first = name; firstAt = at; }
+  }
+  if (first !== 'Unknown') return first;
   const t = text.toUpperCase();
-  const banks: [string, RegExp][] = [
-    ['HDFC', /HDFC BANK/],
-    ['ICICI', /ICICI BANK|ICICI\.BANK/],
-    ['SBI', /STATE BANK OF INDIA|\bSBI\b/],
-    ['Axis', /AXIS BANK/],
-    ['Kotak', /KOTAK MAHINDRA/],
-    ['IDFC', /IDFC FIRST/],
-    ['Yes', /YES BANK LIMITED/],
-    ['PNB', /PUNJAB NATIONAL BANK/],
-    ['BoB', /BANK OF BARODA/],
-    ['IndusInd', /INDUSIND/],
-    ['AU', /AU SMALL FINANCE/],
-    ['Federal', /FEDERAL BANK/],
-  ];
-  // Prefer the bank named most often: statements mention other banks in narrations.
   let best = 'Unknown', bestCount = 0;
-  for (const [name, re] of banks) {
+  for (const [name, re] of BANKS) {
     const count = (t.match(new RegExp(re.source, 'g')) || []).length;
     if (count > bestCount) { best = name; bestCount = count; }
   }

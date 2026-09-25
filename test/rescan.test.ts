@@ -110,3 +110,13 @@ describe('rows that look alike', () => {
     expect(again.duplicates).toBe(5);
   });
 });
+
+it('rescan fixes a statement saved under the wrong bank', () => {
+  const asHdfc: ParseResult = { ...full, meta: { ...full.meta, bank: 'HDFC' } };
+  const s = commitPreview(emptyState(), buildPreview(asHdfc, emptyState(), 'aug.pdf'));
+  const id = s.imports[0].id;
+  const asIcici: ParseResult = { ...full, meta: { ...full.meta, bank: 'ICICI' } };
+  const next = applyRescan(s, id, diffRescan(s, id, asIcici));
+  expect(next.accounts[0].bank).toBe('ICICI');
+  expect(next.txns).toHaveLength(3);
+});
