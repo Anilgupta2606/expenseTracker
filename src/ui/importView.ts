@@ -140,15 +140,38 @@ async function rescan(importId: string) {
     await update((s) => ({ ...s, imports: s.imports.map((i) => (i.id === importId ? { ...i, hasFile: true } : i)) }));
   }
   const balance = result.balanceMismatches === 0 ? 'The running balance adds up on every row.' : `${result.balanceMismatches} row(s) still don't add up to the running balance; check them against the PDF.`;
-  if (!diff.missing.length) {
+  const nMiss = diff.missing.length, nFix = diff.corrected.length;
+  if (!nMiss && !nFix) {
     await update((s) => applyRescan(s, importId, diff));
-    toast(`No missed rows: all ${result.txns.length} rows are already in the app. ${balance}`);
+    toast(`Nothing to fix: all ${result.txns.length} rows match. ${balance}`);
     return;
   }
-  const ok = await askConfirm(`Found ${diff.missing.length} row${diff.missing.length > 1 ? 's' : ''} that ${diff.missing.length > 1 ? 'were' : 'was'} missed (${diff.matched} already in the app). ${balance} Add ${diff.missing.length > 1 ? 'them' : 'it'}?`, `Add ${diff.missing.length} row${diff.missing.length > 1 ? 's' : ''}`, false);
+  const parts = [
+    nMiss ? `${nMiss} missed row${nMiss > 1 ? 's' : ''} to add` : '',
+    nFix ? `${nFix} row${nFix > 1 ? 's' : ''} with a corrected description (payee and category will be re-checked; types you set by hand stay)` : '',
+  ].filter(Boolean);
+  const ok = await askConfirm(`Rescan found ${parts.join(' and ')}. ${balance} Apply?`, 'Apply fixes', false);
   if (!ok) return;
   await update((s) => applyRescan(s, importId, diff));
-  toast(`Added ${diff.missing.length} missed row${diff.missing.length > 1 ? 's' : ''}`);
+  toast([nMiss ? `Added ${nMiss}` : '', nFix ? `corrected ${nFix}` : ''].filter(Boolean).join(', '));
+}
+
+async function aiCheck(importId: string) {
+  if (!app.state.settings.geminiKey) {
+    toast('Add your free Gemini API key in Settings first.', { label: 'Open Settings', run: () => navigate('#settings') });
+    return;
+  }
+  const txns = app.state.txns.filter((t) => t.importId === importId);
+  if (!txns.length) return;
+  try {
+    const [{ checkWithGemini }, { openAiReview }] = await Promise.all([import('../categorize/gemini'), import('./aiReview')]);
+    toast(`Checking ${txns.length} rows with Gemini…`);
+    const suggestions = await checkWithGemini(txns, app.state.settings);
+    document.querySelector('.toast')?.remove();
+    openAiReview(suggestions);
+  } catch (e) {
+    toast((e as Error).message);
+  }
 }
 
 function uploadedList(): string {
@@ -171,11 +194,12 @@ function uploadedList(): string {
         </div>
         <div class="upload-actions">
           <button class="btn small-btn" data-rescan="${esc(r.id)}">Rescan</button>
+          <button class="btn small-btn" data-aicheck="${esc(r.id)}">AI check</button>
           <button class="btn small-btn danger" data-del-import="${esc(r.id)}">Delete</button>
         </div>
       </div>`;
     }).join('')}</div>
-    <p class="tiny" style="margin:8px 4px"><strong>Rescan</strong> reads the file again with several settings and adds any rows that were missed; your changes to existing rows stay. <strong>Delete</strong> removes the statement and its transactions.</p>`;
+    <p class="tiny" style="margin:8px 4px"><strong>Rescan</strong> reads the file again with several settings and adds any rows that were missed; your changes to existing rows stay. <strong>AI check</strong> (optional, free Gemini key in Settings) suggests payee names and categories for you to review. <strong>Delete</strong> removes the statement and its transactions.</p>`;
 }
 
 export function renderImport(root: HTMLElement) {
@@ -204,6 +228,7 @@ export function renderImport(root: HTMLElement) {
     toast('Statement deleted');
   }));
   root.querySelectorAll<HTMLElement>('[data-rescan]').forEach((b) => b.addEventListener('click', () => void rescan(b.dataset.rescan!)));
+  root.querySelectorAll<HTMLElement>('[data-aicheck]').forEach((b) => b.addEventListener('click', () => void aiCheck(b.dataset.aicheck!)));
 
   root.querySelector<HTMLInputElement>('#file')!.addEventListener('change', async (e) => {
     const files = [...((e.target as HTMLInputElement).files ?? [])];

@@ -36,6 +36,12 @@ Password-protected PDFs are supported: the app asks for the password.
 4. **Merchant rules** — ~200 Indian merchants and keywords (Swiggy, Blinkit, Airtel, Netflix, IRCTC, pharmacies, fuel, CBDT tax, GST charges…).
 5. **People vs shops** — UPI payments to a phone number or a person's name become "Payments to People"; shop QR codes (paytmqr, BharatPe, …) with no known merchant are marked **Needs category**.
 
+## Optional free AI check (Google Gemini)
+
+Settings → *Free AI check*: paste a free API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). On the Upload screen, **AI check** sends a statement's rows to Gemini and shows suggested payee names and categories (and rows that look mixed up) for you to accept or untick.
+
+Only date, amount, money in/out and the narration are sent, with long numbers replaced by `#` and your name by `SELF`; balances and the PDF are never sent. On Google's free tier, Google may use what you send to improve its products. The check needs the app's own website (it does not work inside the claude.ai preview).
+
 ## Monthly plan
 
 On the Overview, tap **Edit plan** to enter the month's income, expected spend and expected investment. A plan carries forward to new months until you change it, and earlier months keep their own numbers, so history stays accurate. Income comes only from your entry; credits found in statements (salary, refunds, dividends) are shown but not used for the calculation.

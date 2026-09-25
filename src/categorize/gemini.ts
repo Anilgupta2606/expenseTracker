@@ -1,0 +1,115 @@
+import type { Kind, Settings, Txn } from '../types';
+import { CATEGORIES, isValidCategory } from './categories';
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+
+const KINDS: Kind[] = ['spend', 'investment', 'income', 'transfer', 'cc_bill'];
+const ALL_CATEGORIES = [...new Set(KINDS.flatMap((k) => CATEGORIES[k]))];
+
+export interface AiSuggestion {
+  id: string;
+  payee: string;
+  kind: Kind;
+  category: string;
+  /** The row's text looks like it mixes two payees (probably read from the wrong line). */
+  mixed: boolean;
+  note: string;
+}
+
+/**
+ * What leaves the device: date, amount, direction and the narration with
+ * long numbers (account, phone, reference numbers) and your own names masked.
+ * Balances and account numbers are never sent.
+ */
+export function maskRow(t: Txn, ownNames: string[]): { date: string; amount: number; direction: string; text: string } {
+  let text = t.description.replace(/\d{5,}/g, (m) => '#'.repeat(Math.min(m.length, 6)));
+  for (const n of ownNames) {
+    const name = n.trim();
+    if (name.length >= 3) text = text.replace(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), 'SELF');
+    if (name.length > 10) text = text.replace(new RegExp(name.slice(0, 10).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), 'SELF');
+  }
+  return { date: t.date, amount: t.amount, direction: t.direction, text };
+}
+
+const PROMPT = `You check rows read from an Indian bank statement for a personal expense tracker.
+Each row has an index i, date, amount (INR), direction (debit = money out, credit = money in) and the narration text.
+Numbers are masked with #; "SELF" is the account holder.
+
+For every row return:
+- payee: the real merchant or person, cleaned up (e.g. "Swiggy", "DSB Hospitality", "Rakesh Jain"). ICICI narrations start with a short payee label followed by "UPI/<payee>/<vpa>/...": use the UPI payee.
+- kind: spend, investment, income, transfer (between SELF's own accounts) or cc_bill (paying SELF's credit card bill).
+- category, one of the allowed categories for that kind:
+${KINDS.map((k) => `  ${k}: ${CATEGORIES[k].join(', ')}`).join('\n')}
+- mixed: true if the narration seems to contain text from two different transactions (for example the leading label names one payee but the UPI part names another).
+- note: a few words when you are unsure or mixed is true, otherwise "".
+Hospitality businesses are usually restaurants or hotels, not hospitals. Use "Uncategorised" only when the text gives no clue.`;
+
+const SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    rows: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          i: { type: 'INTEGER' },
+          payee: { type: 'STRING' },
+          kind: { type: 'STRING', enum: KINDS },
+          category: { type: 'STRING', enum: ALL_CATEGORIES },
+          mixed: { type: 'BOOLEAN' },
+          note: { type: 'STRING' },
+        },
+        required: ['i', 'payee', 'kind', 'category', 'mixed', 'note'],
+      },
+    },
+  },
+  required: ['rows'],
+};
+
+async function callGemini(key: string, model: string, rows: ReturnType<typeof maskRow>[]): Promise<{ i: number; payee: string; kind: Kind; category: string; mixed: boolean; note: string }[]> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: `${PROMPT}\n\nRows:\n${JSON.stringify(rows.map((r, i) => ({ i, ...r })))}` }] }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0 },
+      }),
+    });
+  } catch {
+    throw new Error('Could not reach Google Gemini. Check your internet connection.');
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    if (res.status === 400 && /API key/i.test(body)) throw new Error('Google rejected the API key. Check it in Settings.');
+    if (res.status === 403) throw new Error('This API key is not allowed to use Gemini. Create a new key at aistudio.google.com.');
+    if (res.status === 404) throw new Error(`Model "${model}" was not found. Change the model name in Settings.`);
+    if (res.status === 429) throw new Error('Free Gemini limit reached for now. Wait a minute (or until tomorrow) and try again.');
+    throw new Error(`Gemini returned an error (${res.status}).`);
+  }
+  const data = await res.json();
+  const text: string = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
+  if (!text) throw new Error('Gemini returned an empty answer. Try again.');
+  return (JSON.parse(text) as { rows: { i: number; payee: string; kind: Kind; category: string; mixed: boolean; note: string }[] }).rows;
+}
+
+export async function checkWithGemini(txns: Txn[], settings: Settings, onProgress?: (done: number, total: number) => void): Promise<AiSuggestion[]> {
+  if (!settings.geminiKey) throw new Error('Add your free Gemini API key in Settings first.');
+  const model = settings.geminiModel || DEFAULT_GEMINI_MODEL;
+  const out: AiSuggestion[] = [];
+  const BATCH = 60;
+  for (let s = 0; s < txns.length; s += BATCH) {
+    onProgress?.(s, txns.length);
+    const batch = txns.slice(s, s + BATCH);
+    const rows = await callGemini(settings.geminiKey, model, batch.map((t) => maskRow(t, settings.ownNames)));
+    for (const r of rows) {
+      const t = batch[r.i];
+      if (!t || !KINDS.includes(r.kind) || !isValidCategory(r.kind, r.category)) continue;
+      out.push({ id: t.id, payee: (r.payee || t.merchantName).slice(0, 40), kind: r.kind, category: r.category, mixed: Boolean(r.mixed), note: r.note ?? '' });
+    }
+  }
+  onProgress?.(txns.length, txns.length);
+  return out;
+}

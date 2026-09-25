@@ -43,14 +43,18 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   const { account, isNew } = accountFor(result, state, fileName);
   const ctx = contextFor(state, account);
   const existing = new Set(state.txns.map((t) => t.id));
+  // Also treat a row as already imported when date, amount and balance match (the description may read differently now).
+  const existingKeys = new Set(state.txns.map((t) => rowKey(t.accountId, t)).filter(Boolean));
   const now = Date.now();
   const importId = `${account.id}-${now}-${hash(fileName)}`;
   const fresh: Txn[] = [];
   let duplicates = 0;
   result.txns.forEach((p, i) => {
     const id = txnId(account.id, p, i);
-    if (existing.has(id)) { duplicates++; return; }
+    const key = rowKey(account.id, p);
+    if (existing.has(id) || (key && existingKeys.has(key))) { duplicates++; return; }
     existing.add(id);
+    if (key) existingKeys.add(key);
     const merchant = extractMerchant(p.description);
     const c = categorize(p, merchant, ctx, account.id);
     fresh.push({
@@ -94,7 +98,7 @@ export function deleteImport(state: AppState, importId: string): AppState {
 export function recategorizeAll(state: AppState): AppState {
   const ctx = contextFor(state);
   const txns = state.txns.map((t) => {
-    if (t.source === 'manual') return t;
+    if (t.source === 'manual' || t.source === 'ai') return t;
     const merchant = extractMerchant(t.description);
     const c = categorize(t, merchant, ctx, t.accountId);
     return { ...t, kind: c.kind, category: c.category, source: c.source, excluded: c.source === 'learned' ? c.excluded : t.excluded, pairId: undefined, merchantKey: merchant.key, merchantName: merchant.name };
@@ -136,23 +140,47 @@ export async function parseThorough(data: ArrayBuffer, fileName: string, type: s
 export interface RescanResult {
   result: ParseResult;
   missing: Txn[];
+  /** Rows already in the app whose description the new reading corrects. */
+  corrected: { id: string; description: string }[];
   /** Rows already in the app that the new reading also found. */
   matched: number;
 }
 
-/** Rows a new reading of a statement found that the app doesn't have yet. */
+/**
+ * Identifies a statement row without its description, so a better reading of
+ * the same row (e.g. a fixed payee) is recognised as the same transaction.
+ */
+export function rowKey(accountId: string, t: { date: string; amount: number; direction: string; balance?: number }): string | null {
+  return t.balance == null ? null : [accountId, t.date, t.amount, t.direction, t.balance].join('|');
+}
+
+/** Rows a new reading of a statement found that the app doesn't have yet, and rows it reads differently. */
 export function diffRescan(state: AppState, importId: string, result: ParseResult): RescanResult {
   const rec = state.imports.find((i) => i.id === importId);
-  if (!rec) return { result, missing: [], matched: 0 };
+  if (!rec) return { result, missing: [], corrected: [], matched: 0 };
   const account = state.accounts.find((a) => a.id === rec.accountId) ?? { id: rec.accountId, bank: result.meta.bank, number: rec.accountId };
   const ctx = contextFor(state, account);
-  const existing = new Set(state.txns.map((t) => t.id));
+  const existingIds = new Set(state.txns.map((t) => t.id));
+  const byKey = new Map<string, Txn>();
+  for (const t of state.txns) {
+    if (t.accountId !== account.id) continue;
+    const k = rowKey(t.accountId, t);
+    if (k) byKey.set(k, t);
+  }
   const missing: Txn[] = [];
+  const corrected: { id: string; description: string }[] = [];
   let matched = 0;
   result.txns.forEach((p, i) => {
+    const k = rowKey(account.id, p);
+    const same = k ? byKey.get(k) : undefined;
+    if (same) {
+      matched++;
+      if (same.description !== p.description) corrected.push({ id: same.id, description: p.description });
+      return;
+    }
     const id = txnId(account.id, p, i);
-    if (existing.has(id)) { matched++; return; }
-    existing.add(id);
+    if (existingIds.has(id)) { matched++; return; }
+    existingIds.add(id);
     const merchant = extractMerchant(p.description);
     const c = categorize(p, merchant, ctx, account.id);
     missing.push({
@@ -161,7 +189,7 @@ export function diffRescan(state: AppState, importId: string, result: ParseResul
       merchantKey: merchant.key, merchantName: merchant.name,
     });
   });
-  return { result, missing, matched };
+  return { result, missing, corrected, matched };
 }
 
 export function applyRescan(state: AppState, importId: string, rescan: RescanResult): AppState {
@@ -170,6 +198,14 @@ export function applyRescan(state: AppState, importId: string, rescan: RescanRes
     ...i, rows: rescan.result.txns.length, balanceMismatches: rescan.result.balanceMismatches,
     from: dates[0] ?? i.from, to: dates[dates.length - 1] ?? i.to, rescannedAt: Date.now(),
   } : i));
-  const txns = [...state.txns, ...rescan.missing].sort((a, b) => b.date.localeCompare(a.date));
+  // Corrected descriptions get a fresh payee and category, unless you set the type yourself.
+  const fixes = new Map(rescan.corrected.map((c) => [c.id, c.description]));
+  const updated = state.txns.map((t) => {
+    const description = fixes.get(t.id);
+    if (description == null) return t;
+    const merchant = extractMerchant(description);
+    return { ...t, description, merchantKey: merchant.key, merchantName: merchant.name, source: t.source === 'ai' ? 'default' as const : t.source };
+  });
+  const txns = [...updated, ...rescan.missing].sort((a, b) => b.date.localeCompare(a.date));
   return recategorizeAll({ ...state, imports, txns });
 }

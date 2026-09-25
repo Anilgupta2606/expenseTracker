@@ -9,6 +9,7 @@ const SOURCE_LABEL: Record<Txn['source'], string> = {
   rule: 'Matched a built-in rule',
   self: 'Your own name or account is in the narration',
   pair: 'Matched a transfer in your other account',
+  ai: 'Suggested by the AI check and accepted by you',
   learned: 'From your earlier correction',
   manual: 'Set by you',
 };

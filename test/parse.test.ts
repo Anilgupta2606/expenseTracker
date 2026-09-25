@@ -103,6 +103,38 @@ describe('parseLayout (ICICI style)', () => {
   });
 });
 
+describe('parseLayout (ICICI, long remarks centred on the date)', () => {
+  // Row 2's remark is long, so two of its lines sit above its date line.
+  const page2 = page([
+    [619, [[60, 'Transaction'], [399, 'Withdrawal'], [474, 'Deposit'], [532, 'Balance']]],
+    [614, [[24, 'S No.'], [247, 'Transaction Remarks']]],
+    [609, [[74, 'Date'], [396, 'Amount (INR)'], [462, 'Amount (INR)'], [538, '(INR)']]],
+    [594, [[192, 'DLF MALL O']]],
+    [589, [[30, '1'], [61, '10.08.2026'], [427, '1200.00'], [536, '8800.00']]],
+    [584, [[192, 'UPI/DLF MALL O/dlfmall@ybl/Parking/YES']]],
+    [574, [[192, 'BANK/621000000001/PTM0001']]],
+    [564, [[192, 'DSB HOSPIT']]],
+    [554, [[192, 'UPI/DSB HOSPIT/dsbhosp@icici/Dinner/ICICI']]],
+    [549, [[30, '2'], [61, '11.08.2026'], [427, '3400.00'], [536, '5400.00']]],
+    [544, [[192, 'BANK/621000000002/ICI0002/']]],
+    [534, [[192, 'LTD/extra remark line one']]],
+    [524, [[192, 'extra remark line two']]],
+    [514, [[192, 'RAMA MEDIC']]],
+    [509, [[30, '3'], [61, '12.08.2026'], [432, '26.00'], [536, '5374.00']]],
+    [504, [[192, 'UPI/RAMA MEDIC/mab.0372150297/Sent']]],
+  ]);
+  it('gives every row its own description', () => {
+    const r = parseLayout([page2]);
+    expect(r.txns.map((t) => [t.amount, t.description.split(' UPI/')[0]])).toEqual([
+      [1200, 'DLF MALL O'],
+      [3400, 'DSB HOSPIT'],
+      [26, 'RAMA MEDIC'],
+    ]);
+    expect(r.txns[1].description).toContain('extra remark line two');
+    expect(r.txns[0].description).not.toContain('DSB');
+  });
+});
+
 describe('parseRows (Excel/CSV)', () => {
   it('reads withdrawal/deposit columns', () => {
     const r = parseRows([
