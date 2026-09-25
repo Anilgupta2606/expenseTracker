@@ -93,6 +93,8 @@ export interface Settings {
   geminiModel?: string;
   /** Whether each category counts in totals, keyed "kind:Category". Missing means the default. */
   categoryCounted?: Record<string, boolean>;
+  /** Same-amount pairs across accounts you said are not a self transfer ("idA|idB"). */
+  notPairs?: string[];
 }
 
 /** Your own numbers for a month. Months without one inherit the latest earlier month. */

@@ -1,9 +1,11 @@
 import type { Kind, Txn } from '../types';
 import { currentMonth, summarize, summarizeAll, type MonthSummary } from '../plans';
-import { app, navigate, render, toast } from './app';
+import { app, navigate, render, toast, update } from './app';
 import { buildLedgerExport } from '../ledgerExport';
+import { categoryCounted } from '../categorize/categories';
+import { categoryShifts, pairKey, recurringPayments, unpairedTransfers, unusualSpends, type UnpairedTransfer } from '../insights';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
-import { applyFilters, esc, inr, kindVar, monthLabel, monthShort } from './format';
+import { applyFilters, dayLabel, esc, inr, inrFull, kindVar, monthLabel, monthShort } from './format';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { openPlanSheet } from './planSheet';
 
@@ -146,6 +148,84 @@ function glancePanel(s: MonthSummary, txns: Txn[], prev: MonthSummary | undefine
   }
   if (manual) lines.push(`${manual} transaction${manual === 1 ? '' : 's'} added by hand.`);
   return section('Month at a glance', `<ul class="glance">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`);
+}
+
+/** Shows these rows on their own in Transactions. */
+function openPicked(label: string, ids: string[]) {
+  Object.assign(app.filters, { month: 'all', account: 'all', kind: 'all', category: '', search: '', picked: { label, ids } });
+  navigate('#txns');
+}
+
+/** Month-end review: what moved against the usual, and payments that stand out. */
+function reviewPanel(month: string, txns: Txn[]): string {
+  const shifts = categoryShifts(txns, month);
+  const odd = unusualSpends(txns, month);
+  if (!shifts.length && !odd.length) return '';
+  const body = `${shifts.length ? `<p class="tiny" style="margin:0 0 6px">Against your average of the months before</p>
+    <ul class="movements">${shifts.map((c) => `<li class="mv-row"><span class="grow"><span class="mv-label">${esc(c.category)}</span>
+      <span class="tiny">${inr(c.now)} vs usual ${inr(c.usual)}</span></span>
+      <span class="num ${c.delta > 0 ? 'bad' : 'ok'}">${c.delta > 0 ? '▲' : '▼'} ${inr(Math.abs(c.delta))}</span></li>`).join('')}</ul>` : ''}
+    ${odd.length ? `<p class="tiny" style="margin:12px 0 6px">Payments that stand out</p>
+    <ul class="movements">${odd.map((u) => `<li class="mv-row"><span class="grow"><span class="mv-label">${esc(u.txn.merchantName)}</span>
+      <span class="tiny">${esc(dayLabel(u.txn.date))} · ${esc(u.reason)}</span></span>
+      <span class="num">${inrFull(u.txn.amount)}</span></li>`).join('')}</ul>
+    <button class="btn small-btn" style="margin-top:8px" data-open-odd="${esc(odd.map((u) => u.txn.id).join(','))}">Open in Transactions</button>` : ''}`;
+  return section('Month in review', body);
+}
+
+const ordinal = (d: number) => `${d}${d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th'}`;
+
+/** Bills and SIPs that go out every month, and whether this month's has left yet. */
+function recurringPanel(txns: Txn[]): string {
+  const list = recurringPayments(txns);
+  if (!list.length) return '';
+  const missing = list.filter((r) => r.status === 'missing').length;
+  const total = list.reduce((a, r) => a + r.amount, 0);
+  const badge = { paid: '<span class="badge ok-badge">Paid</span>', due: '<span class="badge">Due</span>', missing: '<span class="badge warn">Not seen</span>' };
+  const asOf = txns.reduce((a, t) => (t.date > a ? t.date : a), '');
+  return section('Recurring payments', `<ul class="movements">${list.slice(0, 12).map((r) => `<li><a href="#txns" data-recurring="${esc(r.key)}">
+      <span class="dot" style="background:${kindVar(r.kind)}"></span>
+      <span class="grow"><span class="mv-label">${esc(r.name)}</span><span class="tiny">${esc(r.category)} · around the ${ordinal(r.day)} · ${r.months} months</span></span>
+      <span class="rec-side"><span class="num">${inr(r.amount)}</span>${badge[r.status]}</span></a></li>`).join('')}</ul>`,
+  { note: `About ${inr(total)} a month in ${list.length} regular payment${list.length === 1 ? '' : 's'}${missing ? `; <strong class="bad">${missing} not seen</strong> yet in ${esc(monthLabel(asOf.slice(0, 7)))}` : ''}. Statements up to ${esc(dayLabel(asOf))}.` });
+}
+
+/** Marks a same-amount pair across two of your accounts as a self transfer (or leaves it be). */
+function openPairsSheet(pairs: UnpairedTransfer[]) {
+  const accounts = app.state.accounts;
+  const bank = (id: string) => { const a = accounts.find((x) => x.id === id); return a ? `${a.bank} ••${a.number.slice(-4)}` : id; };
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  const draw = (list: UnpairedTransfer[]) => {
+    backdrop.innerHTML = `<div class="sheet" role="dialog" aria-label="Transfers between your accounts"><div class="grab"></div>
+      <h2>Transfers between your accounts?</h2>
+      <p class="small muted" style="margin-top:-4px">The same amount left one account and reached another within three days. If it was your own money moving, mark it as a self transfer so it isn't counted twice.</p>
+      ${list.length ? list.map((p, i) => `<div class="pair-card">
+        <div class="row" style="justify-content:space-between"><strong class="num">${inrFull(p.out.amount)}</strong><span class="tiny">${esc(dayLabel(p.out.date))}${p.in.date !== p.out.date ? ` → ${esc(dayLabel(p.in.date))}` : ''}</span></div>
+        <div class="small">Out of ${esc(bank(p.out.accountId))}: ${esc(p.out.merchantName)} <span class="tiny">(${esc(p.out.category)})</span></div>
+        <div class="small">Into ${esc(bank(p.in.accountId))}: ${esc(p.in.merchantName)} <span class="tiny">(${esc(p.in.category)})</span></div>
+        <div class="row" style="margin-top:8px;gap:8px"><button class="btn grow small-btn" data-notpair="${i}">Not a transfer</button><button class="btn primary grow small-btn" data-pair="${i}">Self transfer</button></div>
+      </div>`).join('') : '<p class="small ok">All sorted.</p>'}
+      <button class="btn grow" data-close style="margin-top:10px;width:100%">Done</button></div>`;
+    backdrop.querySelector('[data-close]')!.addEventListener('click', () => backdrop.remove());
+    backdrop.querySelectorAll<HTMLElement>('[data-pair]').forEach((b) => b.addEventListener('click', async () => {
+      const p = list[Number(b.dataset.pair)];
+      const counted = categoryCounted(app.state.settings, 'transfer', 'Self Transfer');
+      await update((s) => ({ ...s, txns: s.txns.map((t) => t.id === p.out.id || t.id === p.in.id
+        ? { ...t, kind: 'transfer', category: 'Self Transfer', source: 'manual', pairId: t.id === p.out.id ? p.in.id : p.out.id, excluded: !counted }
+        : t) }));
+      toast('Marked as a self transfer');
+      draw(list.filter((x) => x !== p));
+    }));
+    backdrop.querySelectorAll<HTMLElement>('[data-notpair]').forEach((b) => b.addEventListener('click', async () => {
+      const p = list[Number(b.dataset.notpair)];
+      await update((s) => ({ ...s, settings: { ...s.settings, notPairs: [...(s.settings.notPairs ?? []), pairKey(p.out, p.in)] } }));
+      draw(list.filter((x) => x !== p));
+    }));
+  };
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+  draw(pairs);
+  document.body.append(backdrop);
 }
 
 /**
@@ -291,6 +371,7 @@ export function renderDashboard(root: HTMLElement) {
   const txns = all ? scoped : scoped.filter((t) => t.date.startsWith(month));
   const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir && !t.excluded);
   const review = txns.filter((t) => t.category === 'Uncategorised');
+  const unpaired = unpairedTransfers(state.txns, state.settings.notPairs);
   // Card bill payments count as spending; they appear as their own category.
   const spendCats = [
     ...byCategory(of('spend', 'debit')).map((c) => ({ ...c, kind: 'spend' as Kind })),
@@ -331,11 +412,15 @@ export function renderDashboard(root: HTMLElement) {
 
     ${review.length ? `<a class="banner" href="#txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
 
+    ${unpaired.length ? `<button class="banner" data-pairs style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${unpaired.length}</strong> possible self transfer${unpaired.length > 1 ? 's' : ''} between your accounts ${unpaired.length > 1 ? 'aren’t' : 'isn’t'} marked</span><span>Review ›</span></button>` : ''}
+
     ${kpis(s)}
 
     <div class="grid-2">
       ${budgetPanel(s)}
       ${glancePanel(s, txns, prev, spendCats)}
+      ${all ? '' : reviewPanel(month, scoped)}
+      ${recurringPanel(scoped)}
       ${categoryPanel(spendCats, investedCats)}
       ${section('Spend and investment trend', history.length
         ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month)
@@ -371,6 +456,14 @@ export function renderDashboard(root: HTMLElement) {
     if (b.dataset.goto) { filters.month = b.dataset.goto; render(); }
   }));
   root.querySelector('[data-ledger-copy]')?.addEventListener('click', () => void copyForLedger());
+  root.querySelector('[data-pairs]')?.addEventListener('click', () => openPairsSheet(unpaired));
+  root.querySelector<HTMLElement>('[data-open-odd]')?.addEventListener('click', (e) => openPicked(`Stand-out payments, ${monthShort(month)}`, (e.currentTarget as HTMLElement).dataset.openOdd!.split(',')));
+  root.querySelectorAll<HTMLElement>('[data-recurring]').forEach((el) => el.addEventListener('click', (e) => {
+    e.preventDefault();
+    const key = el.dataset.recurring!;
+    const rows = scoped.filter((t) => t.merchantKey === key && t.direction === 'debit');
+    openPicked(rows[0]?.merchantName ?? 'Recurring', rows.map((t) => t.id));
+  }));
   root.querySelectorAll<HTMLElement>('[data-pie]').forEach((b) => b.addEventListener('click', () => {
     pieMode = b.dataset.pie as PieMode;
     try { localStorage.setItem('pie-mode', pieMode); } catch { /* remembered for this visit only */ }
