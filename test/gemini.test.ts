@@ -40,15 +40,37 @@ describe('checkWithGemini', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('gemini-flash-latest:generateContent');
   });
 
-  it('falls back to the current Flash alias when a chosen model is gone', async () => {
+  it('finds another Flash model if Google retires both aliases', async () => {
     const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       urls.push(url);
-      if (url.includes('gemini-2.5-flash:')) return new Response('not found', { status: 404 });
+      if (url.includes('/models?')) {
+        return new Response(JSON.stringify({ models: ['gemini-9-flash', 'gemini-9-flash-lite', 'gemini-8-flash', 'gemini-9-pro'].map((n) => ({ name: `models/${n}`, supportedGenerationMethods: ['generateContent'] })) }), { status: 200 });
+      }
+      if (url.includes('-latest:')) return new Response('gone', { status: 404 });
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ rows: [] }) }] } }] }), { status: 200 });
     }));
-    await checkWithGemini([txn({})], { ...emptyState().settings, geminiKey: 'k', geminiModel: 'gemini-2.5-flash' });
-    expect(urls.map((u) => u.split('/models/')[1].split(':')[0])).toEqual(['gemini-2.5-flash', 'gemini-flash-latest']);
+    await checkWithGemini([txn({})], { ...emptyState().settings, geminiKey: 'k' }, undefined, 0);
+    expect(urls.filter((u) => u.includes(':generateContent')).map((u) => u.split('/models/')[1].split(':')[0]))
+      .toEqual(['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-9-flash']);
+  });
+
+  it('retries a busy model once, then moves to Flash-Lite and stays there', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url);
+      if (url.includes('gemini-flash-latest:')) return new Response('high demand', { status: 503 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ rows: [] }) }] } }] }), { status: 200 });
+    }));
+    const many = Array.from({ length: 61 }, (_, i) => txn({ id: `t${i}` }));
+    await checkWithGemini(many, { ...emptyState().settings, geminiKey: 'k' }, undefined, 0);
+    expect(urls.map((u) => u.split('/models/')[1].split(':')[0]))
+      .toEqual(['gemini-flash-latest', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-flash-lite-latest']);
+  });
+
+  it('says the servers are busy when every model is', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('high demand', { status: 503 })));
+    await expect(checkWithGemini([txn({})], { ...emptyState().settings, geminiKey: 'k' }, undefined, 0)).rejects.toThrow(/busy/);
   });
 
   it('explains common errors', async () => {

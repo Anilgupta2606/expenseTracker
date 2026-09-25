@@ -1,8 +1,6 @@
 import type { AppState } from '../types';
 import { recategorizeAll } from '../importer';
-import { DEFAULT_GEMINI_MODEL } from '../categorize/gemini';
 
-let geminiModels: string[] = [];
 let geminiStatus: { ok: boolean; text: string } | null = null;
 import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
@@ -85,9 +83,7 @@ export function renderSettings(root: HTMLElement) {
         <li>Create an API key (free, no card needed) and paste it below.</li>
       </ol>
       <label class="field"><span>Gemini API key</span><input type="password" id="gkey" value="${esc(s.geminiKey ?? '')}" autocomplete="off" placeholder="AIza…"></label>
-      <label class="field"><span>Model</span>
-        <select id="gmodel">${[...new Set([DEFAULT_GEMINI_MODEL, s.geminiModel ?? DEFAULT_GEMINI_MODEL, ...geminiModels])].map((m) => `<option value="${esc(m)}" ${m === (s.geminiModel ?? DEFAULT_GEMINI_MODEL) ? 'selected' : ''}>${esc(m)}${m === DEFAULT_GEMINI_MODEL ? ' (recommended)' : ''}</option>`).join('')}</select>
-        <span class="tiny">${geminiModels.length ? `${geminiModels.length} models available to your key.` : 'Tap “Check key” to load every model your key can use.'} ${DEFAULT_GEMINI_MODEL} always points to Google's current free Flash model.</span></label>
+      <p class="tiny" style="margin-top:-4px">The app picks the best free Gemini model that is working at the moment, so there is nothing else to set.</p>
       ${geminiStatus ? `<p class="small ${geminiStatus.ok ? 'ok' : 'bad'}">${esc(geminiStatus.text)}</p>` : ''}
       <div class="row wrap"><button class="btn" id="check-gemini">Check key</button><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
     </div>
@@ -147,8 +143,8 @@ export function renderSettings(root: HTMLElement) {
     render();
     try {
       const { listGeminiModels } = await import('../categorize/gemini');
-      geminiModels = await listGeminiModels(key);
-      geminiStatus = { ok: true, text: `✓ Key works. Choose a model and tap Save.` };
+      await listGeminiModels(key);
+      geminiStatus = { ok: true, text: '✓ Key works and is saved on this device.' };
       // Keep the key in the box after the screen redraws.
       await update((st) => ({ ...st, settings: { ...st.settings, geminiKey: key } }));
     } catch (e) {
@@ -158,8 +154,7 @@ export function renderSettings(root: HTMLElement) {
   });
   root.querySelector('#save-gemini')!.addEventListener('click', async () => {
     const geminiKey = val('gkey').trim() || undefined;
-    const geminiModel = val('gmodel') || undefined;
-    await update((st) => ({ ...st, settings: { ...st.settings, geminiKey, geminiModel } }));
+    await update((st) => ({ ...st, settings: { ...st.settings, geminiKey } }));
     toast(geminiKey ? 'Gemini key saved on this device' : 'Saved');
   });
   root.querySelector('#clear-gemini')?.addEventListener('click', async () => {

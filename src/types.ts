@@ -69,6 +69,7 @@ export interface Settings {
   familyNames: string[];
   /** Free Google Gemini key for the optional AI check (stored on this device only). */
   geminiKey?: string;
+  /** @deprecated The app picks the model; kept so old saved data still loads. */
   geminiModel?: string;
 }
 
