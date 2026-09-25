@@ -1,10 +1,12 @@
 import type { Kind, Settings, Txn } from '../types';
 import { CATEGORIES, isValidCategory } from './categories';
 
-/** Google's alias for its current free Flash model; survives model retirements. */
-export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
-/** Tried in order when the chosen model is busy, retired or out of free quota. */
-export const BACKUP_GEMINI_MODELS = [DEFAULT_GEMINI_MODEL, 'gemini-flash-lite-latest'];
+/**
+ * Google's aliases for its current free Flash and Flash-Lite models, best
+ * first. They survive model retirements; the next one is tried when a model
+ * is busy, retired or out of free quota.
+ */
+export const GEMINI_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
 
 /** An error another model may not have: retired (404), busy (5xx) or out of free quota (429). */
 class ModelUnavailable extends Error {
@@ -13,7 +15,7 @@ class ModelUnavailable extends Error {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Text models this key can use, for the model picker in Settings. */
+/** Text models this key can use; also checks that the key works. */
 export async function listGeminiModels(key: string): Promise<string[]> {
   let res: Response;
   try {
@@ -114,7 +116,7 @@ async function callGemini(key: string, model: string, rows: ReturnType<typeof ma
     const body = await res.text().catch(() => '');
     if (res.status === 400 && /API key/i.test(body)) throw new Error('Google rejected the API key. Check it in Settings.');
     if (res.status === 403) throw new Error('This API key is not allowed to use Gemini. Create a new key at aistudio.google.com.');
-    if (res.status === 404) throw new ModelUnavailable(`Model "${model}" is not available to this key. Pick another model in Settings.`, 404);
+    if (res.status === 404) throw new ModelUnavailable(`Model "${model}" is not available to this key.`, 404);
     if (res.status === 429) throw new ModelUnavailable('Free Gemini limit reached for now. Wait a minute (or until tomorrow) and try again.', 429);
     if (res.status >= 500) throw new ModelUnavailable('Google\'s free Gemini servers are busy right now. Try again in a few minutes.', res.status);
     throw new Error(`Gemini returned an error (${res.status}).`);
@@ -136,10 +138,21 @@ async function askModel(key: string, model: string, rows: ReturnType<typeof mask
   }
 }
 
+/** Flash models the key lists, newest first; used only if Google retires both aliases. */
+async function discoveredModels(key: string, tried: string[]): Promise<string[]> {
+  const names = await listGeminiModels(key).catch(() => []);
+  const version = (n: string) => Number(n.match(/gemini-(\d+(?:\.\d+)?)/)?.[1] ?? 0);
+  return names
+    .filter((n) => /flash/.test(n) && !/preview|exp|thinking/.test(n) && !tried.includes(n))
+    .sort((a, b) => version(b) - version(a) || Number(/lite/.test(a)) - Number(/lite/.test(b)))
+    .slice(0, 3);
+}
+
 export async function checkWithGemini(txns: Txn[], settings: Settings, onProgress?: (done: number, total: number) => void, retryDelay = 2000): Promise<AiSuggestion[]> {
   if (!settings.geminiKey) throw new Error('Add your free Gemini API key in Settings first.');
-  // Your chosen model first, then Google's current Flash and Flash-Lite aliases.
-  let models = [...new Set([settings.geminiModel || DEFAULT_GEMINI_MODEL, ...BACKUP_GEMINI_MODELS])];
+  const key = settings.geminiKey;
+  let models = [...GEMINI_MODELS];
+  let discovered = false;
   const out: AiSuggestion[] = [];
   const BATCH = 60;
   for (let s = 0; s < txns.length; s += BATCH) {
@@ -148,15 +161,20 @@ export async function checkWithGemini(txns: Txn[], settings: Settings, onProgres
     const masked = batch.map((t) => maskRow(t, settings.ownNames));
     let rows;
     let lastError: unknown;
-    for (const model of models) {
+    for (let m = 0; m < models.length && !rows; m++) {
+      const model = models[m];
       try {
-        rows = await askModel(settings.geminiKey, model, masked, retryDelay);
+        rows = await askModel(key, model, masked, retryDelay);
         // Keep using the model that answered for the remaining batches.
-        models = [model, ...models.filter((m) => m !== model)];
-        break;
+        models = [model, ...models.filter((x) => x !== model)];
       } catch (e) {
         if (!(e instanceof ModelUnavailable)) throw e;
         lastError = e;
+        // Every known model is gone: look up what this key can use.
+        if (m === models.length - 1 && !discovered && e.status === 404) {
+          discovered = true;
+          models.push(...await discoveredModels(key, models));
+        }
       }
     }
     if (!rows) throw lastError;

@@ -63,7 +63,8 @@ export function migrate(value: Partial<AppState>): AppState {
   const { aiApiKey: _k, aiModel: _m, ...settings } = (value.settings ?? {}) as AppState['settings'] & { aiApiKey?: string; aiModel?: string };
   const state: AppState = { ...base, ...value, settings: { ...base.settings, ...settings } } as AppState;
   // gemini-2.5-flash stopped answering for free keys; the alias always works.
-  if (state.settings.geminiModel === 'gemini-2.5-flash') state.settings = { ...state.settings, geminiModel: undefined };
+  // The app now picks the Gemini model itself.
+  if (state.settings.geminiModel) state.settings = { ...state.settings, geminiModel: undefined };
   state.plans ??= {};
   state.imports ??= [];
   // "Not counted" used to be a type; it is now the Counted checkbox.
