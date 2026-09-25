@@ -1,6 +1,7 @@
 import type { Kind, Txn } from '../types';
 import { currentMonth, summarize, summarizeAll, type MonthSummary } from '../plans';
-import { app, navigate, render } from './app';
+import { app, navigate, render, toast } from './app';
+import { buildLedgerExport } from '../ledgerExport';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
 import { applyFilters, esc, inr, kindVar, monthLabel, monthShort } from './format';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
@@ -145,6 +146,33 @@ function glancePanel(s: MonthSummary, txns: Txn[], prev: MonthSummary | undefine
   }
   if (manual) lines.push(`${manual} transaction${manual === 1 ? '' : 's'} added by hand.`);
   return section('Month at a glance', `<ul class="glance">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`);
+}
+
+/**
+ * Copies every month's investment totals (all accounts, counted rows only)
+ * for the 16-Year Ledger's "Paste from expense tracker" box. Where the
+ * clipboard is refused, the text is shown ready to copy by hand.
+ */
+async function copyForLedger() {
+  const text = JSON.stringify(buildLedgerExport(app.state.txns));
+  const months = buildLedgerExport(app.state.txns).months.length;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`Copied ${months} month${months === 1 ? '' : 's'} of investments. Paste it on the Ledger's Overview.`);
+  } catch {
+    const backdrop = document.createElement('div');
+    backdrop.className = 'sheet-backdrop';
+    backdrop.innerHTML = `<div class="sheet" role="dialog" aria-label="Copy for Ledger"><div class="grab"></div>
+      <h2>Copy for Ledger</h2>
+      <p class="small muted" style="margin-top:-4px">Select all of this, copy it, and paste it on the Ledger's Overview.</p>
+      <textarea readonly rows="6" style="width:100%;font-family:ui-monospace,monospace;font-size:12px"></textarea>
+      <button class="btn grow" data-close style="margin-top:10px">Done</button></div>`;
+    backdrop.querySelector('textarea')!.value = text;
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+    backdrop.querySelector('[data-close]')!.addEventListener('click', () => backdrop.remove());
+    document.body.append(backdrop);
+    backdrop.querySelector('textarea')!.select();
+  }
 }
 
 type PieMode = 'both' | 'spend' | 'investment';
@@ -328,7 +356,8 @@ export function renderDashboard(root: HTMLElement) {
         <thead><tr><th>Type</th><th class="r">Net invested</th></tr></thead>
         <tbody>${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}">${esc(c.category)}</a></td><td class="num r">${signed(c.total)}</td></tr>`).join('')}</tbody>
       </table>
-      <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>` : '<p class="muted small">No investments here.</p>')}
+      <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>` : '<p class="muted small">No investments here.</p>',
+        { action: state.txns.some((t) => t.kind === 'investment') ? '<button class="btn small-btn" data-ledger-copy title="Copy every month\'s investment totals to paste into your 16-Year Ledger">Copy for Ledger</button>' : '' })}
     </div>
 
     ${section('Monthly history', historyTable(history), { action: rangeToggle() })}
@@ -341,6 +370,7 @@ export function renderDashboard(root: HTMLElement) {
   root.querySelectorAll<HTMLElement>('[data-goto]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.goto) { filters.month = b.dataset.goto; render(); }
   }));
+  root.querySelector('[data-ledger-copy]')?.addEventListener('click', () => void copyForLedger());
   root.querySelectorAll<HTMLElement>('[data-pie]').forEach((b) => b.addEventListener('click', () => {
     pieMode = b.dataset.pie as PieMode;
     try { localStorage.setItem('pie-mode', pieMode); } catch { /* remembered for this visit only */ }
