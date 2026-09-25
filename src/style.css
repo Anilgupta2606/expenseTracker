@@ -378,3 +378,13 @@ table.simple a { color: inherit; }
 .as-input input { flex: 1; min-width: 0; }
 .as-examples { flex-wrap: wrap; margin-bottom: 12px; }
 .as-examples .chip { cursor: pointer; }
+
+/* Foldable transaction groups */
+.group-head { display: flex; align-items: center; gap: 6px; width: 100%; margin: 12px 0 6px; padding: 6px 4px; background: none; border: 0; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; color: var(--text-2); text-align: left; cursor: pointer; }
+.group-head:hover { background: var(--surface-2); }
+.group-head.date .grow { text-transform: uppercase; letter-spacing: 0.05em; font-size: 12px; color: var(--text-3); }
+.group-head .num { font-weight: 600; }
+.group-head .chev { width: 16px; height: 16px; flex: none; transition: transform 0.15s ease; }
+.group-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
+.group-head[aria-expanded="false"] { margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .group-head .chev { transition: none; } }
