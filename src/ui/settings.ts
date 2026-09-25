@@ -1,9 +1,12 @@
 import type { AppState } from '../types';
 import { recategorizeAll } from '../importer';
 import { DEFAULT_GEMINI_MODEL } from '../categorize/gemini';
+
+let geminiModels: string[] = [];
+let geminiStatus: { ok: boolean; text: string } | null = null;
 import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
-import { app, askConfirm, toast, update } from './app';
+import { app, askConfirm, render, toast, update } from './app';
 import { esc } from './format';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
@@ -82,9 +85,11 @@ export function renderSettings(root: HTMLElement) {
         <li>Create an API key (free, no card needed) and paste it below.</li>
       </ol>
       <label class="field"><span>Gemini API key</span><input type="password" id="gkey" value="${esc(s.geminiKey ?? '')}" autocomplete="off" placeholder="AIza…"></label>
-      <label class="field"><span>Model</span><input type="text" id="gmodel" value="${esc(s.geminiModel ?? '')}" placeholder="${DEFAULT_GEMINI_MODEL}" autocapitalize="none" spellcheck="false">
-        <span class="tiny">Leave empty for ${DEFAULT_GEMINI_MODEL}. Change it only if Google renames its free model.</span></label>
-      <div class="row wrap"><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
+      <label class="field"><span>Model</span>
+        <select id="gmodel">${[...new Set([DEFAULT_GEMINI_MODEL, s.geminiModel ?? DEFAULT_GEMINI_MODEL, ...geminiModels])].map((m) => `<option value="${esc(m)}" ${m === (s.geminiModel ?? DEFAULT_GEMINI_MODEL) ? 'selected' : ''}>${esc(m)}${m === DEFAULT_GEMINI_MODEL ? ' (recommended)' : ''}</option>`).join('')}</select>
+        <span class="tiny">${geminiModels.length ? `${geminiModels.length} models available to your key.` : 'Tap “Check key” to load every model your key can use.'} ${DEFAULT_GEMINI_MODEL} always points to Google's current free Flash model.</span></label>
+      ${geminiStatus ? `<p class="small ${geminiStatus.ok ? 'ok' : 'bad'}">${esc(geminiStatus.text)}</p>` : ''}
+      <div class="row wrap"><button class="btn" id="check-gemini">Check key</button><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
     </div>
 
     <div class="card">
@@ -135,9 +140,25 @@ export function renderSettings(root: HTMLElement) {
     if (!(await askConfirm(`Delete ${id} and all its transactions?`, 'Delete account'))) return;
     await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id), imports: st.imports.filter((i) => i.accountId !== id) }));
   }));
+  root.querySelector('#check-gemini')!.addEventListener('click', async () => {
+    const key = val('gkey').trim();
+    if (!key) { geminiStatus = { ok: false, text: 'Paste your key first.' }; render(); return; }
+    geminiStatus = { ok: true, text: 'Checking…' };
+    render();
+    try {
+      const { listGeminiModels } = await import('../categorize/gemini');
+      geminiModels = await listGeminiModels(key);
+      geminiStatus = { ok: true, text: `✓ Key works. Choose a model and tap Save.` };
+      // Keep the key in the box after the screen redraws.
+      await update((st) => ({ ...st, settings: { ...st.settings, geminiKey: key } }));
+    } catch (e) {
+      geminiStatus = { ok: false, text: (e as Error).message };
+      render();
+    }
+  });
   root.querySelector('#save-gemini')!.addEventListener('click', async () => {
     const geminiKey = val('gkey').trim() || undefined;
-    const geminiModel = val('gmodel').trim() || undefined;
+    const geminiModel = val('gmodel') || undefined;
     await update((st) => ({ ...st, settings: { ...st.settings, geminiKey, geminiModel } }));
     toast(geminiKey ? 'Gemini key saved on this device' : 'Saved');
   });
