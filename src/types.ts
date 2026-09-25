@@ -87,6 +87,8 @@ export interface Settings {
   familyNames: string[];
   /** Free Google Gemini key for the optional AI check (stored on this device only). */
   geminiKey?: string;
+  /** Your investment plan page, opened from the profile menu. Empty string hides the link. */
+  planLink?: string;
   /** @deprecated The app picks the model; kept so old saved data still loads. */
   geminiModel?: string;
   /** Whether each category counts in totals, keyed "kind:Category". Missing means the default. */

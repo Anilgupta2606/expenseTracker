@@ -7,6 +7,7 @@ import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
 import { esc, kindVar } from './format';
+import { DEFAULT_PLAN_LINK } from '../links';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
@@ -97,6 +98,13 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
+      <h2>Investment plan link</h2>
+      <p class="small muted" style="margin-top:-4px">Opened from <strong>Investment plan ↗</strong> in the profile menu. Clear it to hide that item.</p>
+      <label class="field"><span>Link</span><input type="url" id="plan-link" value="${esc(s.planLink ?? DEFAULT_PLAN_LINK)}" placeholder="https://…" inputmode="url" autocapitalize="none" spellcheck="false"></label>
+      <button class="btn primary" id="save-plan-link">Save link</button>
+    </div>
+
+    <div class="card">
       <h2>Free AI check (Google Gemini)</h2>
       <p class="small muted" style="margin-top:-4px">Optional. On the Upload screen, <strong>AI check</strong> sends a statement's rows to Google Gemini to suggest cleaner payee names and categories and to flag rows that look mixed up. You review every suggestion before anything changes.</p>
       <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers (account, phone, reference) replaced by # and your name replaced by SELF. Balances and the PDF itself are never sent. On Google's free tier, Google may use what you send to improve its products.</p>
@@ -170,6 +178,12 @@ export function renderSettings(root: HTMLElement) {
     const name = key.split(':').slice(1).join(':');
     toast(`${name}: ${hits ? `${hits} transaction${hits > 1 ? 's' : ''} ` : ''}${counted ? 'counted' : 'not counted'}${hits ? '' : ' from now on'}`);
   }));
+  root.querySelector('#save-plan-link')!.addEventListener('click', async () => {
+    const v = val('plan-link').trim();
+    if (v && !/^https:\/\//i.test(v)) { toast('Use a full link starting with https://'); return; }
+    await update((st) => ({ ...st, settings: { ...st.settings, planLink: v } }));
+    toast(v ? 'Investment plan link saved' : 'Investment plan link removed from the menu');
+  });
   root.querySelector('#check-gemini')!.addEventListener('click', async () => {
     const key = val('gkey').trim();
     if (!key) { geminiStatus = { ok: false, text: 'Paste your key first.' }; render(); return; }
