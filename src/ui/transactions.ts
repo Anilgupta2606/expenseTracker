@@ -91,6 +91,27 @@ export function txnRow(t: Txn): string {
   </div>`;
 }
 
+/** Folded groups, keyed "date:2026-07-31" or "category:Spend · Food & Dining"; remembered on this device. */
+const COLLAPSED_KEY = 'txn-collapsed';
+const collapsed: Set<string> = (() => {
+  try { return new Set<string>(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]')); } catch { return new Set<string>(); }
+})();
+function saveCollapsed() {
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed].slice(-500))); } catch { /* private mode: just forget */ }
+}
+
+/** A tappable section header; the rows under it fold away. */
+function group(key: string, label: string, list: Txn[], cls: string): string {
+  const open = !collapsed.has(key);
+  const net = list.reduce((a, t) => a + (t.direction === 'debit' ? -t.amount : t.amount), 0);
+  return `<button class="group-head ${cls}" data-fold="${esc(key)}" aria-expanded="${open}">
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="grow">${esc(label)} <span class="tiny">· ${list.length}</span></span>
+      <span class="num">${net < 0 ? '−' : '+'}${inrFull(Math.abs(net))}</span>
+    </button>
+    ${open ? `<div class="list">${list.map(txnRow).join('')}</div>` : ''}`;
+}
+
 export function renderTransactions(root: HTMLElement) {
   const { state, filters } = app;
   const txns = applyFilters(state.txns, filters);
@@ -117,19 +138,21 @@ export function renderTransactions(root: HTMLElement) {
     </div>
     <div class="row between small muted wrap" style="margin:0 4px 4px">
       <span>${txns.length} transactions · <span class="num">Out ${inrFull(out)} · In ${inrFull(inn)}</span></span>
+      <span class="row" style="gap:8px">
+      <span class="seg-toggle" role="group" aria-label="Expand or collapse">
+        <button data-fold-all="expand">Expand all</button>
+        <button data-fold-all="collapse">Collapse all</button>
+      </span>
       <span class="seg-toggle" role="group" aria-label="Group by">
         <button data-group="date" class="${filters.groupBy === 'date' ? 'on' : ''}">By date</button>
         <button data-group="category" class="${filters.groupBy === 'category' ? 'on' : ''}">By category</button>
       </span>
+      </span>
     </div>
     ${!txns.length ? '<div class="card empty">No transactions match.</div>'
       : filters.groupBy === 'category'
-        ? catGroups.map(([cat, list]) => `
-          <div class="cat-head"><span>${esc(cat)} <span class="tiny">· ${list.length}</span></span><span class="num">${net(list) < 0 ? '−' : '+'}${inrFull(Math.abs(net(list)))}</span></div>
-          <div class="list">${list.map(txnRow).join('')}</div>`).join('')
-        : [...byDay.entries()].map(([day, list]) => `
-          <div class="day">${esc(dayLabel(day))}</div>
-          <div class="list">${list.map(txnRow).join('')}</div>`).join('')}
+        ? catGroups.map(([cat, list]) => group(`category:${cat}`, cat, list, 'cat')).join('')
+        : [...byDay.entries()].map(([day, list]) => group(`date:${day}`, dayLabel(day), list, 'date')).join('')}
   `;
   bindFilterBar(root);
   root.querySelector('[data-add]')!.addEventListener('click', () => openManualSheet(undefined, filters.month !== 'all' ? `${filters.month}-01` : undefined));
@@ -142,6 +165,18 @@ export function renderTransactions(root: HTMLElement) {
     again?.focus();
     again?.setSelectionRange(pos, pos);
   });
+  root.querySelectorAll<HTMLElement>('[data-fold]').forEach((el) => el.addEventListener('click', () => {
+    const key = el.dataset.fold!;
+    if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+    saveCollapsed();
+    render();
+  }));
+  root.querySelectorAll<HTMLElement>('[data-fold-all]').forEach((el) => el.addEventListener('click', () => {
+    const keys = filters.groupBy === 'category' ? catGroups.map(([cat]) => `category:${cat}`) : [...byDay.keys()].map((d) => `date:${d}`);
+    for (const k of keys) { if (el.dataset.foldAll === 'collapse') collapsed.add(k); else collapsed.delete(k); }
+    saveCollapsed();
+    render();
+  }));
   root.querySelectorAll<HTMLElement>('[data-group]').forEach((el) => el.addEventListener('click', () => {
     filters.groupBy = el.dataset.group as Filters['groupBy'];
     render();
