@@ -1,7 +1,7 @@
 import type { Account, AppState, ParsedTxn, ParseResult, StatementImport, Txn } from './types';
 import { categorize, extractMerchant, pairTransfers, type Context } from './categorize/engine';
 import { hash } from './parse/util';
-import { isValidCategory } from './categorize/categories';
+import { categoryCounted, isValidCategory } from './categorize/categories';
 
 export interface ImportPreview {
   result: ParseResult;
@@ -60,6 +60,8 @@ export function classify(p: ParsedTxn, ctx: Context, accountId: string): Classif
   if (hint?.payee.trim() && !/^(self|unknown|uncategori[sz]ed|n\/?a|none|-)$/i.test(hint.payee.trim())) { out.merchantName = hint.payee.trim().slice(0, 40); out.titleSet = 'ai'; }
   if (hint && (c.source === 'default' || c.weak)) { out.kind = hint.kind; out.category = hint.category; out.source = 'ai'; }
   if (c.title) { out.merchantName = c.title; out.titleSet = 'manual'; }
+  // Categories switched off in Settings → What counts are left out of totals.
+  if (!categoryCounted(ctx.settings, out.kind, out.category)) out.excluded = true;
   return out;
 }
 
@@ -80,6 +82,8 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   // Pair within this statement and against earlier imports (on copies, until committed).
   const earlier = state.txns.map((t) => ({ ...t }));
   pairTransfers([...earlier, ...fresh]);
+  countPairs(fresh, state.settings, true);
+  countPairs(earlier, state.settings, true);
   const updated = earlier.filter((t, i) => t.pairId !== state.txns[i].pairId);
   const dates = fresh.map((t) => t.date).sort();
   const record: StatementImport = {
@@ -95,6 +99,15 @@ export function commitPreview(state: AppState, preview: ImportPreview): AppState
   const txns = [...state.txns.map((t) => changed.get(t.id) ?? t), ...preview.fresh].sort((a, b) => b.date.localeCompare(a.date));
   const imports = preview.fresh.length ? [...state.imports, preview.record] : state.imports;
   return { ...state, accounts, txns, imports };
+}
+
+/** Rows just paired as self transfers follow the Self Transfer Counted setting. */
+function countPairs(txns: Txn[], settings: AppState['settings'], inPlace = false): Txn[] {
+  const counted = categoryCounted(settings, 'transfer', 'Self Transfer');
+  const fix = (t: Txn) => (t.source === 'pair' && t.pairId && t.excluded === counted ? { ...t, excluded: !counted } : t);
+  if (!inPlace) return txns.map(fix);
+  txns.forEach((t, i) => { txns[i] = fix(t); });
+  return txns;
 }
 
 /** Removes an uploaded statement and every transaction that came from it. */
@@ -114,13 +127,15 @@ export function recategorizeAll(state: AppState): AppState {
     const c = classify({ ...t, hint: undefined }, ctx, t.accountId);
     // A title you typed stays; one from a learned rule beats the AI's.
     const own = t.titleSet === 'manual' || (t.titleSet === 'ai' && c.titleSet !== 'manual');
+    // A row that moves to another category follows that category's Counted setting; otherwise your tick stays.
+    const moved = c.kind !== t.kind || c.category !== t.category;
     return {
-      ...t, kind: c.kind, category: c.category, source: c.source, excluded: c.source === 'learned' ? c.excluded : t.excluded, pairId: undefined,
+      ...t, kind: c.kind, category: c.category, source: c.source, excluded: moved || c.source === 'learned' ? c.excluded : t.excluded, pairId: undefined,
       merchantKey: c.merchantKey, merchantName: own ? t.merchantName : c.merchantName, titleSet: own ? t.titleSet : c.titleSet,
     };
   });
   pairTransfers(txns);
-  return { ...state, txns };
+  return { ...state, txns: countPairs(txns, state.settings) };
 }
 
 /** Fewer balance breaks wins; then more rows. */

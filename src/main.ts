@@ -6,6 +6,7 @@ import { renderDashboard } from './ui/dashboard';
 import { renderImport } from './ui/importView';
 import { renderSettings } from './ui/settings';
 import { renderTransactions } from './ui/transactions';
+import { renderAssistant } from './ui/assistant';
 import { isSignedIn, setSignedIn, usernameOf } from './auth';
 import { LOGO, renderLogin } from './ui/login';
 
@@ -13,6 +14,7 @@ const ICONS = {
   home: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
   upload: '<path d="M12 16V4m0 0l-5 5m5-5l5 5M4 20h16"/>',
+  spark: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 };
 
@@ -20,6 +22,7 @@ const ROUTES: { hash: string; label: string; icon: keyof typeof ICONS; view: (ro
   { hash: '#overview', label: 'Overview', icon: 'home', view: renderDashboard },
   { hash: '#txns', label: 'Transactions', icon: 'list', view: renderTransactions },
   { hash: '#upload', label: 'Upload', icon: 'upload', view: renderImport },
+  { hash: '#assistant', label: 'Assistant', icon: 'spark', view: renderAssistant },
   { hash: '#settings', label: 'Settings', icon: 'gear', view: renderSettings },
 ];
 

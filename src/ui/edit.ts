@@ -1,5 +1,5 @@
 import type { Kind, Txn } from '../types';
-import { CATEGORIES, KIND_LABEL } from '../categorize/categories';
+import { CATEGORIES, categoryCounted, KIND_LABEL } from '../categorize/categories';
 import { detectMethod } from '../categorize/engine';
 import { app, toast, update } from './app';
 import { dayLabel, esc, inrFull } from './format';
@@ -18,6 +18,7 @@ export function openEditSheet(t: Txn) {
   let kind: Kind = t.kind;
   let category = t.category;
   let title = t.merchantName;
+  let counted = !t.excluded;
   const similarFor = (k: Kind) => app.state.txns.filter((x) => x.merchantKey === t.merchantKey && x.id !== t.id &&
     (k === 'spend' || k === 'income' ? x.direction === t.direction : true));
   const account = app.state.accounts.find((a) => a.id === t.accountId);
@@ -30,7 +31,7 @@ export function openEditSheet(t: Txn) {
   const draw = () => {
     const cats = CATEGORIES[kind];
     const similar = similarFor(kind);
-    if (!cats.includes(category)) category = cats[0];
+    if (!cats.includes(category)) { category = cats[0]; counted = categoryCounted(app.state.settings, kind, category); }
     backdrop.innerHTML = `<div class="sheet" role="dialog" aria-label="Edit transaction">
       <div class="grab"></div>
       <div class="row between">
@@ -53,7 +54,7 @@ export function openEditSheet(t: Txn) {
         <input type="checkbox" id="remember" checked style="margin-top:3px">
         <span>Always use this type, category and title for <strong>${esc(t.merchantName)}</strong>${similar.length ? ` and update ${similar.length} other transaction${similar.length > 1 ? 's' : ''}` : ''}</span>
       </label>
-      <label class="row small" style="margin-bottom:12px"><input type="checkbox" id="counted" ${t.excluded ? '' : 'checked'}><span>Counted in totals</span></label>
+      <label class="row small" style="margin-bottom:12px"><input type="checkbox" id="counted" ${counted ? 'checked' : ''}><span>Counted in totals</span></label>
       <label class="field"><span>Note</span><input type="text" id="note" value="${esc(t.note ?? '')}" placeholder="Optional"></label>
       <p class="tiny" style="margin-top:-4px">${esc(SOURCE_LABEL[t.source])}</p>
       <div class="row">
@@ -70,6 +71,11 @@ export function openEditSheet(t: Txn) {
     }));
     backdrop.querySelector<HTMLSelectElement>('#cat')!.addEventListener('change', (e) => {
       category = (e.target as HTMLSelectElement).value;
+      counted = categoryCounted(app.state.settings, kind, category);
+      backdrop.querySelector<HTMLInputElement>('#counted')!.checked = counted;
+    });
+    backdrop.querySelector<HTMLInputElement>('#counted')!.addEventListener('change', (e) => {
+      counted = (e.target as HTMLInputElement).checked;
     });
     backdrop.querySelector('#cancel')!.addEventListener('click', close);
     backdrop.querySelector('#save')!.addEventListener('click', async () => {

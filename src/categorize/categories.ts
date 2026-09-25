@@ -1,4 +1,4 @@
-import type { Kind } from '../types';
+import type { Kind, Settings } from '../types';
 
 export const KIND_LABEL: Record<Kind, string> = {
   spend: 'Spend',
@@ -41,4 +41,15 @@ export function defaultCategory(kind: Kind, current: string): string {
   if (CATEGORIES[kind].includes(current)) return current;
   if (kind === 'investment') return 'Other Investment';
   return CATEGORIES[kind].includes(UNCATEGORISED) ? UNCATEGORISED : CATEGORIES[kind][0];
+}
+
+/** Categories left out of totals unless you switch them on. */
+const NOT_COUNTED_BY_DEFAULT = new Set(['transfer:Self Transfer']);
+
+export const categoryKey = (kind: Kind, category: string) => `${kind}:${category}`;
+
+/** Whether transactions in this category count in totals (Settings → What counts). */
+export function categoryCounted(settings: Pick<Settings, 'categoryCounted'>, kind: Kind, category: string): boolean {
+  const key = categoryKey(kind, category);
+  return settings.categoryCounted?.[key] ?? !NOT_COUNTED_BY_DEFAULT.has(key);
 }

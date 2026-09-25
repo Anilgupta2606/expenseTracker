@@ -87,6 +87,8 @@ export interface Settings {
   geminiKey?: string;
   /** @deprecated The app picks the model; kept so old saved data still loads. */
   geminiModel?: string;
+  /** Whether each category counts in totals, keyed "kind:Category". Missing means the default. */
+  categoryCounted?: Record<string, boolean>;
 }
 
 /** Your own numbers for a month. Months without one inherit the latest earlier month. */

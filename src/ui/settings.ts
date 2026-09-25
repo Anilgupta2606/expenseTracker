@@ -1,11 +1,12 @@
-import type { AppState } from '../types';
+import type { AppState, Kind } from '../types';
+import { CATEGORIES, categoryCounted, categoryKey, KIND_LABEL } from '../categorize/categories';
 import { recategorizeAll } from '../importer';
 
 let geminiStatus: { ok: boolean; text: string } | null = null;
 import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
-import { esc } from './format';
+import { esc, kindVar } from './format';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
@@ -23,6 +24,25 @@ function toCsv(state: AppState): string {
     rows.push([t.date, t.accountId, t.merchantName, t.kind, t.category, t.direction, String(t.amount), String(t.balance ?? ''), t.description, t.note ?? '']);
   }
   return rows.map((r) => r.map(q).join(',')).join('\n');
+}
+
+/** Every category with a Counted switch; changing one updates all its transactions and future uploads. */
+function whatCounts(state: AppState): string {
+  const kinds: Kind[] = ['spend', 'cc_bill', 'investment', 'income', 'transfer'];
+  const n = new Map<string, number>();
+  for (const t of state.txns) n.set(categoryKey(t.kind, t.category), (n.get(categoryKey(t.kind, t.category)) ?? 0) + 1);
+  return `<div class="card">
+    <h2>What counts in totals</h2>
+    <p class="small muted" style="margin-top:-4px">Untick a category to leave all its transactions out of spending, investment and income totals, now and in future uploads. You can still tick single transactions back in.</p>
+    ${kinds.map((k) => `<div class="count-group">
+      <div class="count-head"><span class="dot" style="background:${kindVar(k)}"></span>${esc(KIND_LABEL[k])}</div>
+      <div class="count-grid">${CATEGORIES[k].map((c) => {
+        const key = categoryKey(k, c);
+        return `<label class="count-item"><input type="checkbox" data-catcount="${esc(key)}" ${categoryCounted(state.settings, k, c) ? 'checked' : ''}>
+          <span class="grow">${esc(c)}</span><span class="tiny">${n.get(key) ?? ''}</span></label>`;
+      }).join('')}</div>
+    </div>`).join('')}
+  </div>`;
 }
 
 export function renderSettings(root: HTMLElement) {
@@ -53,6 +73,8 @@ export function renderSettings(root: HTMLElement) {
         <input type="text" id="family" value="${esc(s.familyNames.join(', '))}" placeholder="e.g. spouse's name"></label>
       <button class="btn primary" id="save-names">Save and re-categorise</button>
     </div>
+
+    ${whatCounts(state)}
 
     <div class="card">
       <h2>Accounts</h2>
@@ -135,6 +157,18 @@ export function renderSettings(root: HTMLElement) {
     const id = b.dataset.delAccount!;
     if (!(await askConfirm(`Delete ${id} and all its transactions?`, 'Delete account'))) return;
     await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id), imports: st.imports.filter((i) => i.accountId !== id) }));
+  }));
+  root.querySelectorAll<HTMLInputElement>('[data-catcount]').forEach((box) => box.addEventListener('change', async () => {
+    const key = box.dataset.catcount!;
+    const counted = box.checked;
+    const hits = app.state.txns.filter((t) => categoryKey(t.kind, t.category) === key).length;
+    await update((st) => ({
+      ...st,
+      settings: { ...st.settings, categoryCounted: { ...st.settings.categoryCounted, [key]: counted } },
+      txns: st.txns.map((t) => (categoryKey(t.kind, t.category) === key ? { ...t, excluded: !counted } : t)),
+    }));
+    const name = key.split(':').slice(1).join(':');
+    toast(`${name}: ${hits ? `${hits} transaction${hits > 1 ? 's' : ''} ` : ''}${counted ? 'counted' : 'not counted'}${hits ? '' : ' from now on'}`);
   }));
   root.querySelector('#check-gemini')!.addEventListener('click', async () => {
     const key = val('gkey').trim();

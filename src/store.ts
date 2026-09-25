@@ -66,6 +66,11 @@ export function migrate(value: Partial<AppState>): AppState {
   // The app now picks the Gemini model itself.
   if (state.settings.geminiModel) state.settings = { ...state.settings, geminiModel: undefined };
   state.plans ??= {};
+  // "What counts" arrived with Self Transfer switched off: apply that to rows saved before.
+  if (!state.settings.categoryCounted) {
+    state.settings = { ...state.settings, categoryCounted: {} };
+    state.txns = (state.txns ?? []).map((t) => (t.kind === 'transfer' && t.category === 'Self Transfer' ? { ...t, excluded: true } : t));
+  }
   state.imports ??= [];
   // "Not counted" used to be a type; it is now the Counted checkbox.
   state.txns = state.txns.map((t) => (t.kind === 'ignore'
