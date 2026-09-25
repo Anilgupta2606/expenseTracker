@@ -408,3 +408,5 @@ table.simple a { color: inherit; }
 .pm-theme { display: grid !important; grid-template-columns: repeat(3, 1fr); margin: 0 4px 6px; }
 .pm-theme button { padding: 6px 0; }
 
+
+.pm-ext { margin-left: auto; color: var(--text-3); font-size: 13px; }
