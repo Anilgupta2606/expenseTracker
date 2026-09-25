@@ -156,7 +156,16 @@ loadState().then((state) => {
 // Offline support where the browser allows a service worker (not inside an embedded frame).
 if ('serviceWorker' in navigator && window.top === window) {
   try {
-    registerSW({ immediate: true });
+    registerSW({
+      immediate: true,
+      // Look for a new version when the app is reopened and every hour, not only on a cold start.
+      onRegisteredSW(_url, reg) {
+        if (!reg) return;
+        const check = () => { if (navigator.onLine) void reg.update().catch(() => {}); };
+        setInterval(check, 60 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+      },
+    });
   } catch {
     // Works without offline caching.
   }

@@ -120,3 +120,11 @@ it('rescan fixes a statement saved under the wrong bank', () => {
   expect(next.accounts[0].bank).toBe('ICICI');
   expect(next.txns).toHaveLength(3);
 });
+
+it('rescan keeps a bank you picked by hand', () => {
+  const s0 = commitPreview(emptyState(), buildPreview({ ...full, meta: { ...full.meta, bank: 'HDFC' } }, emptyState(), 'aug.pdf'));
+  const s = { ...s0, accounts: s0.accounts.map((a) => ({ ...a, bank: 'ICICI', bankSetByHand: true })) };
+  const id = s.imports[0].id;
+  const next = applyRescan(s, id, diffRescan(s, id, { ...full, meta: { ...full.meta, bank: 'HDFC' } }));
+  expect(next.accounts[0].bank).toBe('ICICI');
+});

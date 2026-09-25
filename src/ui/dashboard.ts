@@ -1,5 +1,5 @@
 import type { Kind, Txn } from '../types';
-import { currentMonth, summarize, type MonthSummary } from '../plans';
+import { currentMonth, summarize, summarizeAll, type MonthSummary } from '../plans';
 import { app, navigate, render } from './app';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
 import { applyFilters, esc, inr, kindVar, monthLabel, monthShort } from './format';
@@ -87,7 +87,7 @@ function kpis(s: MonthSummary): string {
   const noPlan = '<span class="muted">No target set</span>';
   const vsPlan = s.saved - s.plannedSaving;
   return `<div class="kpis">
-    ${tile('income', 'Income', s.planSet ? inr(plan.income) : '—', s.planSet ? 'Set by you' : '<button class="link-btn" data-plan>Set income</button>')}
+    ${tile('income', 'Income', s.planSet ? inr(plan.income) : '—', s.planSet ? (s.month === 'all' ? 'Your monthly incomes added up' : 'Set by you') : '<button class="link-btn" data-plan>Set income</button>')}
     ${tile('spend', 'Spent', inr(actual.spend), plan.expectedSpend > 0
       ? (s.spendOver > 0 ? `<span class="pill bad">▲ ${inr(s.spendOver)} over</span>` : `<span class="pill ok">▼ ${inr(-s.spendOver)} under</span>`)
       : noPlan, 'data-kind="spend" role="link" tabindex="0"')}
@@ -169,7 +169,7 @@ function categoryPanel(spendCats: CatTotal[], investCats: CatTotal[]): string {
   const slices = toSlices(items.map((c) => ({ category: c.label, total: c.total, count: c.count })));
   const total = items.reduce((a, c) => a + c.total, 0) || 1;
   const centre = pieMode === 'spend' ? 'spent' : pieMode === 'investment' ? 'invested' : 'spent + invested';
-  const empty = pieMode === 'spend' ? 'No spending in this month.' : pieMode === 'investment' ? 'No investments in this month.' : 'No spending or investments in this month.';
+  const empty = pieMode === 'spend' ? 'No spending here.' : pieMode === 'investment' ? 'No investments here.' : 'No spending or investments here.';
   const body = slices.length ? `<div class="pie-wrap">
       ${donutChart(slices, centre)}
       <div class="pie-legend">
@@ -242,23 +242,25 @@ export function renderDashboard(root: HTMLElement) {
   }
 
   const months = availableMonths();
-  if (!monthDefaulted || filters.month === 'all' || !months.includes(filters.month)) {
+  // Opens on the latest month; "All time" stays once you pick it.
+  if (!monthDefaulted || (filters.month !== 'all' && !months.includes(filters.month))) {
     filters.month = months[0];
     monthDefaulted = true;
   }
   const month = filters.month;
+  const all = month === 'all';
   const idx = months.indexOf(month);
-  const newer = months[idx - 1];
-  const older = months[idx + 1];
+  const newer = all ? undefined : months[idx - 1];
+  const older = all ? undefined : months[idx + 1];
 
   // The Overview follows only the account picker; search and type chips belong to the Transactions list.
   const scoped = applyFilters(state.txns, { ...filters, month: 'all', search: '' }, { kind: false });
   const allMonths = [...months].reverse();
   const inRange = filters.range ? allMonths.slice(-filters.range) : allMonths;
   const history = inRange.map((m) => summarize(state, m, scoped));
-  const s = summarize(state, month, scoped);
+  const s = all ? summarizeAll(state, months, scoped) : summarize(state, month, scoped);
   const prev = older ? summarize(state, older, scoped) : undefined;
-  const txns = scoped.filter((t) => t.date.startsWith(month));
+  const txns = all ? scoped : scoped.filter((t) => t.date.startsWith(month));
   const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir && !t.excluded);
   const review = txns.filter((t) => t.category === 'Uncategorised');
   // Card bill payments count as spending; they appear as their own category.
@@ -283,7 +285,7 @@ export function renderDashboard(root: HTMLElement) {
 
   root.innerHTML = `
     <div class="page-head">
-      <div><h1>Overview</h1><p class="page-sub">${txns.length} transaction${txns.length === 1 ? '' : 's'} in ${esc(monthLabel(month))}</p></div>
+      <div><h1>Overview</h1><p class="page-sub">${txns.length} transaction${txns.length === 1 ? '' : 's'} ${all ? `across ${months.length} month${months.length === 1 ? '' : 's'}` : `in ${esc(monthLabel(month))}`}</p></div>
       <button class="btn primary" data-add>+ Add transaction</button>
     </div>
 
@@ -291,6 +293,7 @@ export function renderDashboard(root: HTMLElement) {
       <div class="month-switch" role="group" aria-label="Month">
         <button class="icon-btn" data-goto="${older ?? ''}" ${older ? '' : 'disabled'} aria-label="Previous month">‹</button>
         <select data-filter="month" aria-label="Month">
+          <option value="all" ${all ? 'selected' : ''}>All time</option>
           ${months.map((m) => `<option value="${m}" ${month === m ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
         </select>
         <button class="icon-btn" data-goto="${newer ?? ''}" ${newer ? '' : 'disabled'} aria-label="Next month">›</button>
@@ -320,20 +323,21 @@ export function renderDashboard(root: HTMLElement) {
       ${section('Not counted as spend', movements.length ? `<ul class="movements">${movements.map((m) => `
         <li><a href="#txns" data-kind="${'filter' in m ? m.filter : m.kind}"><span class="dot" style="background:${kindVar(m.kind)}"></span>
           <span class="grow"><span class="mv-label">${esc(m.label)}</span><span class="tiny">${esc(m.note)}</span></span>
-          <span class="num">${inr(m.value)}</span></a></li>`).join('')}</ul>` : '<p class="muted small">Nothing this month.</p>')}
+          <span class="num">${inr(m.value)}</span></a></li>`).join('')}</ul>` : '<p class="muted small">Nothing here.</p>')}
       ${section('Investments by type', invCats.length ? `<table class="simple data">
         <thead><tr><th>Type</th><th class="r">Net invested</th></tr></thead>
         <tbody>${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}">${esc(c.category)}</a></td><td class="num r">${signed(c.total)}</td></tr>`).join('')}</tbody>
       </table>
-      <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>` : '<p class="muted small">No investments this month.</p>')}
+      <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>` : '<p class="muted small">No investments here.</p>')}
     </div>
 
     ${section('Monthly history', historyTable(history), { action: rangeToggle() })}
   `;
 
   bindFilterBar(root);
-  root.querySelector('[data-add]')!.addEventListener('click', () => openManualSheet(undefined, month === currentMonth() ? undefined : `${month}-01`));
-  root.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', () => openPlanSheet(month)));
+  root.querySelector('[data-add]')!.addEventListener('click', () => openManualSheet(undefined, all || month === currentMonth() ? undefined : `${month}-01`));
+  // Plans are per month; from "All time" the button edits the latest month's.
+  root.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', () => openPlanSheet(all ? months[0] : month)));
   root.querySelectorAll<HTMLElement>('[data-goto]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.goto) { filters.month = b.dataset.goto; render(); }
   }));
