@@ -16,7 +16,6 @@ export function renderLogin(root: HTMLElement, onSuccess: () => void) {
         <button type="button" class="pw-toggle" id="pw-toggle" aria-label="Show password">Show</button></div></label>
       <p class="small bad" id="login-error" role="alert" hidden></p>
       <button class="btn primary block" type="submit" id="login-submit">Sign in</button>
-      <p class="tiny" style="margin:14px 0 0;text-align:center">First time? Use <strong>admin</strong> / <strong>admin</strong>, then change it in Settings.</p>
     </form>
   </div>`;
   const form = root.querySelector<HTMLFormElement>('#login-form')!;
