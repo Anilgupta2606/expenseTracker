@@ -1,7 +1,6 @@
 import type { AppState, Kind } from '../types';
 import { CATEGORIES, categoryCounted, categoryKey, KIND_LABEL } from '../categorize/categories';
 import { recategorizeAll } from '../importer';
-import { BANK_NAMES } from '../parse/util';
 
 let geminiStatus: { ok: boolean; text: string } | null = null;
 import { emptyState, migrate } from '../store';
@@ -79,13 +78,9 @@ export function renderSettings(root: HTMLElement) {
 
     <div class="card">
       <h2>Accounts</h2>
-      <p class="small muted" style="margin-top:-4px">If a bank was read wrongly, pick the right one here.</p>
       ${state.accounts.length ? `<table class="simple">
         <tr><th>Account</th><th>Transactions</th><th></th></tr>
-        ${state.accounts.map((a) => `<tr><td>
-            <select data-bank="${esc(a.id)}" aria-label="Bank for account ending ${esc(a.number.slice(-4))}" class="bank-select">
-              ${[...new Set([...BANK_NAMES, a.bank, 'Other'])].map((b) => `<option ${b === a.bank ? 'selected' : ''}>${esc(b)}</option>`).join('')}
-            </select> ••${esc(a.number.slice(-4))}<div class="tiny">${esc(a.holderName ?? '')}</div></td>
+        ${state.accounts.map((a) => `<tr><td>${esc(a.bank)} ••${esc(a.number.slice(-4))}<div class="tiny">${esc(a.holderName ?? '')}</div></td>
           <td class="num">${state.txns.filter((t) => t.accountId === a.id).length}</td>
           <td style="text-align:right"><button class="btn danger" data-del-account="${esc(a.id)}">Delete</button></td></tr>`).join('')}
       </table>` : '<p class="muted small">No accounts yet. Upload a statement to add one.</p>'}
@@ -162,11 +157,6 @@ export function renderSettings(root: HTMLElement) {
     const id = b.dataset.delAccount!;
     if (!(await askConfirm(`Delete ${id} and all its transactions?`, 'Delete account'))) return;
     await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id), imports: st.imports.filter((i) => i.accountId !== id) }));
-  }));
-  root.querySelectorAll<HTMLSelectElement>('select[data-bank]').forEach((sel) => sel.addEventListener('change', async () => {
-    const id = sel.dataset.bank!;
-    await update((st) => ({ ...st, accounts: st.accounts.map((a) => (a.id === id ? { ...a, bank: sel.value, bankSetByHand: true } : a)) }));
-    toast(`Account ••${id.slice(-4)} is now ${sel.value}`);
   }));
   root.querySelectorAll<HTMLInputElement>('[data-catcount]').forEach((box) => box.addEventListener('change', async () => {
     const key = box.dataset.catcount!;

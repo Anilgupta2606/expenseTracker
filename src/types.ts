@@ -60,8 +60,8 @@ export interface Txn extends ParsedTxn {
 }
 
 export interface Account {
-  /** You picked the bank in Settings; rescans leave it alone. */
-  bankSetByHand?: boolean;
+  /** The bank was re-read from the stored statement (done once, to fix labels from older versions). */
+  bankChecked?: boolean;
   id: string; // e.g. HDFC-1234
   bank: string;
   number: string;

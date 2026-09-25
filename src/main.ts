@@ -1,7 +1,7 @@
 import './style.css';
 import { registerSW } from 'virtual:pwa-register';
-import { loadState } from './store';
-import { app, onRender } from './ui/app';
+import { loadFile, loadState } from './store';
+import { app, onRender, toast, update } from './ui/app';
 import { renderDashboard } from './ui/dashboard';
 import { renderImport } from './ui/importView';
 import { renderSettings } from './ui/settings';
@@ -151,7 +151,28 @@ window.addEventListener('hashchange', render);
 loadState().then((state) => {
   app.state = state;
   render();
+  void recheckBanks();
 });
+
+/**
+ * Older versions could name the wrong bank (e.g. an ICICI statement full of
+ * "HDFC Bank" UPI remarks). Once per account, re-read the bank from a stored
+ * statement and fix the label.
+ */
+async function recheckBanks() {
+  const { bankOfFile } = await import('./importer');
+  for (const account of app.state.accounts.filter((a) => !a.bankChecked)) {
+    const rec = app.state.imports.find((i) => i.accountId === account.id && i.hasFile);
+    let bank: string | undefined;
+    try {
+      const file = rec ? await loadFile(rec.id) : undefined;
+      if (file) bank = await bankOfFile(file.data, file.name, file.type);
+    } catch { /* unreadable (e.g. password protected): leave the label */ }
+    const fixed = bank && bank !== 'Unknown' && bank !== account.bank ? bank : undefined;
+    await update((s) => ({ ...s, accounts: s.accounts.map((a) => (a.id === account.id ? { ...a, bankChecked: true, ...(fixed ? { bank: fixed } : {}) } : a)) }));
+    if (fixed) toast(`Account ••${account.number.slice(-4)} is ${fixed}, not ${account.bank}; fixed.`);
+  }
+}
 
 // Offline support where the browser allows a service worker (not inside an embedded frame).
 if ('serviceWorker' in navigator && window.top === window) {
