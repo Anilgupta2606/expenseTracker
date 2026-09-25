@@ -1,5 +1,5 @@
 import type { Kind, Txn } from '../types';
-import { defaultCategory, KIND_LABEL } from '../categorize/categories';
+import { categoryCounted, defaultCategory, KIND_LABEL } from '../categorize/categories';
 import { app, render, toast, update } from './app';
 import { bindFilterBar, filterBar } from './dashboard';
 import { openEditSheet } from './edit';
@@ -7,9 +7,6 @@ import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { applyFilters, dayLabel, esc, initials, inrFull, kindVar } from './format';
 
 const KIND_CHIPS: (Kind | 'all' | 'review' | 'excluded')[] = ['all', 'review', 'spend', 'investment', 'cc_bill', 'income', 'transfer', 'excluded'];
-
-/** Types that feed the spending and investment totals, so the Counted box matters. */
-const COUNTABLE = new Set<Kind>(['spend', 'investment', 'cc_bill']);
 
 /** Choices for "Counts as", in the order people think about them. */
 const COUNTS_AS: { kind: Kind; label: string }[] = [
@@ -36,13 +33,19 @@ async function setCounted(id: string, counted: boolean) {
   } : undefined);
 }
 
+/** A transaction moved to another type takes that category's Counted setting (Settings → What counts). */
+function moveTo(x: Txn, kind: Kind, source: 'manual' | 'learned'): Txn {
+  const category = defaultCategory(kind, x.category);
+  return { ...x, kind, category, source, excluded: !categoryCounted(app.state.settings, kind, category) };
+}
+
 /** Moves one transaction (and optionally similar ones) to another type. */
 async function setKind(id: string, kind: Kind) {
   const t = app.state.txns.find((x) => x.id === id);
   if (!t || t.kind === kind) return;
   await update((s) => ({
     ...s,
-    txns: s.txns.map((x) => (x.id === id ? { ...x, kind, category: defaultCategory(kind, x.category), source: 'manual' as const } : x)),
+    txns: s.txns.map((x) => (x.id === id ? moveTo(x, kind, 'manual') : x)),
   }));
   const similar = app.state.txns.filter((x) => x.id !== id && x.merchantKey === t.merchantKey && x.direction === t.direction && x.kind !== kind && x.source !== 'manual');
   const label = COUNTS_AS.find((c) => c.kind === kind)!.label;
@@ -57,7 +60,7 @@ async function setKind(id: string, kind: Kind) {
           ...s.rules.filter((r) => !(r.key === t.merchantKey && (!direction || !r.direction || r.direction === direction))),
           { key: t.merchantKey, kind, category: defaultCategory(kind, t.category), direction, createdAt: Date.now() },
         ],
-        txns: s.txns.map((x) => (ids.has(x.id) ? { ...x, kind, category: defaultCategory(kind, x.category), source: 'learned' as const } : x)),
+        txns: s.txns.map((x) => (ids.has(x.id) ? moveTo(x, kind, 'learned') : x)),
       }));
       toast(similar.length ? `Updated ${similar.length} more and saved as a rule` : 'Saved as a rule for future uploads');
     },
@@ -79,7 +82,7 @@ export function txnRow(t: Txn): string {
     <span class="txn-side">
       <span class="num amt ${t.direction}">${t.direction === 'credit' ? '+' : '−'}${inrFull(t.amount)}</span>
       <span class="row" style="gap:6px">
-        ${COUNTABLE.has(t.kind) ? `<label class="count-box" title="Include in totals"><input type="checkbox" data-counted="${esc(t.id)}" ${t.excluded ? '' : 'checked'}> Counted</label>` : ''}
+        <label class="count-box" title="Include in totals"><input type="checkbox" data-counted="${esc(t.id)}" ${t.excluded ? '' : 'checked'}> Counted</label>
         <select class="counts-as" data-counts="${esc(t.id)}" aria-label="Counts as" title="Counts as">
           ${COUNTS_AS.map((c) => `<option value="${c.kind}" ${c.kind === t.kind ? 'selected' : ''}>${c.label}</option>`).join('')}
         </select>
