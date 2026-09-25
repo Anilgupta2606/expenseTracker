@@ -410,3 +410,9 @@ table.simple a { color: inherit; }
 
 
 .pm-ext { margin-left: auto; color: var(--text-3); font-size: 13px; }
+
+/* Dragging statements over the app */
+.drop-hint { margin-top: 6px; }
+body.dropping::after { content: 'Drop statements to read them'; position: fixed; inset: 12px; z-index: 300; display: grid; place-items: center;
+  border: 3px dashed var(--accent); border-radius: 18px; background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
+  color: var(--accent); font-size: 20px; font-weight: 650; pointer-events: none; }

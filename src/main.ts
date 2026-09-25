@@ -131,7 +131,7 @@ function render() {
   if (!isSignedIn()) {
     view = null;
     document.body.classList.add('signed-out');
-    renderLogin(root, () => { document.body.classList.remove('signed-out'); render(); });
+    renderLogin(root, () => { document.body.classList.remove('signed-out'); render(); void takeSharedFiles(); });
     return;
   }
   document.body.classList.remove('signed-out');
@@ -151,11 +151,56 @@ function render() {
 }
 
 onRender(render);
+
+/* Drop statements anywhere (laptop): go to Upload and read them. */
+let dragDepth = 0;
+const hasFiles = (e: DragEvent) => Boolean(e.dataTransfer && [...e.dataTransfer.types].includes('Files'));
+window.addEventListener('dragenter', (e) => {
+  if (!hasFiles(e) || !isSignedIn()) return;
+  dragDepth++;
+  document.body.classList.add('dropping');
+});
+window.addEventListener('dragleave', (e) => {
+  if (!hasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) document.body.classList.remove('dropping');
+});
+window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove('dropping');
+  if (!isSignedIn()) return;
+  const files = [...(e.dataTransfer?.files ?? [])];
+  if (location.hash !== '#upload') location.hash = '#upload';
+  void import('./ui/importView').then(({ addFiles }) => addFiles(files));
+});
+
+/* Files shared to the installed app from the Share sheet (Android) wait in a cache until the app opens. */
+async function takeSharedFiles() {
+  if (!location.hash.startsWith('#upload-shared') || !('caches' in window)) return;
+  try {
+    const cache = await caches.open('shared-statements');
+    const keys = await cache.keys();
+    const files: File[] = [];
+    for (const req of keys) {
+      const res = await cache.match(req);
+      if (!res) continue;
+      const name = decodeURIComponent(new URL(req.url).searchParams.get('name') ?? 'statement.pdf');
+      files.push(new File([await res.blob()], name, { type: res.headers.get('content-type') ?? '' }));
+      await cache.delete(req);
+    }
+    location.hash = '#upload';
+    if (files.length) { const { addFiles } = await import('./ui/importView'); await addFiles(files); }
+  } catch { location.hash = '#upload'; }
+}
 window.addEventListener('hashchange', render);
 
 loadState().then((state) => {
   app.state = state;
   render();
+  if (isSignedIn()) void takeSharedFiles();
   void recheckBanks();
 });
 
