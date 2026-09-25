@@ -78,6 +78,7 @@ function entryHtml(e: Entry, i: number): string {
     }
     if (rows.length && (plan.measure === 'list' || rows.length <= 12)) body += rowsHtml(rows, plan.measure === 'list' ? 25 : 12);
     if (!rows.length) body += '<p class="small muted" style="margin:6px 0 0">No transactions match.</p>';
+    else body += `<button class="btn small-btn" style="margin-top:8px" data-open-txns="${i}">Open these ${rows.length} in Transactions</button>`;
     body += '<p class="tiny" style="margin:8px 0 0">Worked out on this device from your transactions.</p>';
   } else if (plan.intent === 'change' && plan.action) {
     const what = describeAction(plan.action);
@@ -131,6 +132,12 @@ export function renderAssistant(root: HTMLElement) {
     input.focus();
   }));
   root.querySelectorAll('[data-go-settings]').forEach((b) => b.addEventListener('click', () => navigate('#settings')));
+  root.querySelectorAll<HTMLElement>('[data-open-txns]').forEach((b) => b.addEventListener('click', () => {
+    const e = history[Number(b.dataset.openTxns)];
+    // Show exactly the answer's rows: clear the other filters so none are hidden.
+    Object.assign(app.filters, { month: 'all', account: 'all', kind: 'all', category: '', search: '', picked: { label: e.request.length > 40 ? `${e.request.slice(0, 38)}…` : e.request, ids: e.ids ?? [] } });
+    navigate('#txns');
+  }));
   root.querySelectorAll<HTMLElement>('[data-cancel]').forEach((b) => b.addEventListener('click', () => {
     history[Number(b.dataset.cancel)].status = 'cancelled';
     render();
