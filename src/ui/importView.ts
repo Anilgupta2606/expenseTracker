@@ -11,6 +11,13 @@ interface Pending { file: File; preview?: ImportPreview; error?: string; needsPa
 
 let pending: Pending[] = [];
 let busy = false;
+/** A rescan or AI check that is running, shown on its statement until it finishes. */
+let working: { id: string; what: 'rescan' | 'ai'; done: number; total: number } | null = null;
+
+function setWorking(w: typeof working) {
+  working = w;
+  render();
+}
 
 async function processFile(p: Pending, password?: string) {
   try {
@@ -106,6 +113,7 @@ function askPassword(fileName: string, wrong: boolean): Promise<string | null> {
 }
 
 async function rescan(importId: string) {
+  if (working) return;
   const rec = app.state.imports.find((i) => i.id === importId);
   if (!rec) return;
   let file: StoredFile | undefined = await loadFile(importId);
@@ -119,10 +127,11 @@ async function rescan(importId: string) {
   let result;
   for (;;) {
     try {
-      toast('Rescanning…');
+      setWorking({ id: importId, what: 'rescan', done: 0, total: 0 });
       result = await parseThorough(file.data, file.name, file.type, password);
       break;
     } catch (e) {
+      setWorking(null);
       if (e instanceof PasswordNeededError) {
         const pw = await askPassword(file.name, e.incorrect);
         if (pw == null) return;
@@ -133,6 +142,7 @@ async function rescan(importId: string) {
       return;
     }
   }
+  setWorking(null);
   const diff = diffRescan(app.state, importId, result);
   // Keep the file for next time if it had to be picked again.
   if (!rec.hasFile) {
@@ -162,16 +172,31 @@ async function aiCheck(importId: string) {
     return;
   }
   const txns = app.state.txns.filter((t) => t.importId === importId);
-  if (!txns.length) return;
+  if (!txns.length || working) return;
+  setWorking({ id: importId, what: 'ai', done: 0, total: txns.length });
   try {
     const [{ checkWithGemini }, { openAiReview }] = await Promise.all([import('../categorize/gemini'), import('./aiReview')]);
-    toast(`Checking ${txns.length} rows with Gemini…`);
-    const suggestions = await checkWithGemini(txns, app.state.settings);
-    document.querySelector('.toast')?.remove();
+    const suggestions = await checkWithGemini(txns, app.state.settings, (done, total) => {
+      if (working?.id === importId) setWorking({ id: importId, what: 'ai', done, total });
+    });
+    setWorking(null);
     openAiReview(suggestions);
   } catch (e) {
+    setWorking(null);
     toast((e as Error).message);
   }
+}
+
+function progressNote(w: NonNullable<typeof working>): string {
+  if (w.what === 'rescan') {
+    return `<div class="work-note" role="status"><span class="spinner"></span><div class="grow">Reading the file again with several settings…</div></div>`;
+  }
+  // Show a little progress before the first batch comes back, so the bar never looks stuck at zero.
+  const pct = w.total ? Math.max(8, Math.round((w.done / w.total) * 100)) : 8;
+  return `<div class="work-note" role="status"><span class="spinner"></span><div class="grow">
+      <div>AI check in progress: Gemini is reading ${w.total} rows${w.done ? ` (${w.done} done)` : ''}. This usually takes 10–60 seconds; keep this page open.</div>
+      <div class="work-bar"><span style="width:${pct}%"></span></div>
+    </div></div>`;
 }
 
 function uploadedList(): string {
@@ -193,11 +218,11 @@ function uploadedList(): string {
           ${check ? `<div style="margin-top:6px">${check}</div>` : ''}
         </div>
         <div class="upload-actions">
-          <button class="btn small-btn" data-rescan="${esc(r.id)}">Rescan</button>
-          <button class="btn small-btn" data-aicheck="${esc(r.id)}">AI check</button>
-          <button class="btn small-btn danger" data-del-import="${esc(r.id)}">Delete</button>
+          <button class="btn small-btn" data-rescan="${esc(r.id)}" ${working ? 'disabled' : ''}>${working?.id === r.id && working.what === 'rescan' ? '<span class="spinner"></span>Rescanning' : 'Rescan'}</button>
+          <button class="btn small-btn" data-aicheck="${esc(r.id)}" ${working ? 'disabled' : ''}>${working?.id === r.id && working.what === 'ai' ? '<span class="spinner"></span>Checking' : 'AI check'}</button>
+          <button class="btn small-btn danger" data-del-import="${esc(r.id)}" ${working ? 'disabled' : ''}>Delete</button>
         </div>
-      </div>`;
+      </div>${working?.id === r.id ? progressNote(working) : ''}`;
     }).join('')}</div>
     <p class="tiny" style="margin:8px 4px"><strong>Rescan</strong> reads the file again with several settings and adds any rows that were missed; your changes to existing rows stay. <strong>AI check</strong> (optional, free Gemini key in Settings) suggests payee names and categories for you to review. <strong>Delete</strong> removes the statement and its transactions.</p>`;
 }

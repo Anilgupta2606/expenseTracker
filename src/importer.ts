@@ -42,23 +42,18 @@ export function contextFor(state: AppState, extraAccount?: Account): Context {
 export function buildPreview(result: ParseResult, state: AppState, fileName: string): ImportPreview {
   const { account, isNew } = accountFor(result, state, fileName);
   const ctx = contextFor(state, account);
-  const existing = new Set(state.txns.map((t) => t.id));
-  // Also treat a row as already imported when date, amount and balance match (the description may read differently now).
-  const existingKeys = new Set(state.txns.map((t) => rowKey(t.accountId, t)).filter(Boolean));
   const now = Date.now();
   const importId = `${account.id}-${now}-${hash(fileName)}`;
+  // Rows already in the app (e.g. the same statement uploaded again) are skipped.
+  const { ids, matches } = matchRows(state, account.id, result.txns);
   const fresh: Txn[] = [];
   let duplicates = 0;
   result.txns.forEach((p, i) => {
-    const id = txnId(account.id, p, i);
-    const key = rowKey(account.id, p);
-    if (existing.has(id) || (key && existingKeys.has(key))) { duplicates++; return; }
-    existing.add(id);
-    if (key) existingKeys.add(key);
+    if (matches[i]) { duplicates++; return; }
     const merchant = extractMerchant(p.description);
     const c = categorize(p, merchant, ctx, account.id);
     fresh.push({
-      ...p, id, accountId: account.id,
+      ...p, id: ids[i], accountId: account.id,
       kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
       merchantKey: merchant.key, merchantName: merchant.name,
       importedAt: now,
@@ -154,37 +149,61 @@ export function rowKey(accountId: string, t: { date: string; amount: number; dir
   return t.balance == null ? null : [accountId, t.date, t.amount, t.direction, t.balance].join('|');
 }
 
+/**
+ * Gives every row of a reading an id, and pairs it one-to-one with a
+ * transaction already in the app: first by id, then by date, amount and
+ * balance with the same description, then by date, amount and balance alone
+ * (the same row read with a different description). Rows that look alike, such
+ * as a payment, its refund and a second payment on one day, each keep their own
+ * match instead of all landing on one saved row.
+ */
+function matchRows(state: AppState, accountId: string, rows: ParseResult['txns']): { ids: string[]; matches: (Txn | undefined)[] } {
+  const seen = new Map<string, number>();
+  const ids = rows.map((p, i) => {
+    const base = txnId(accountId, p, i);
+    const n = seen.get(base) ?? 0;
+    seen.set(base, n + 1);
+    // The second identical row in one statement gets its own id.
+    return n ? hash(`${base}#${n}`) : base;
+  });
+  const own = state.txns.filter((t) => t.accountId === accountId);
+  const byId = new Map(own.map((t) => [t.id, t]));
+  const used = new Set<string>();
+  const matches: (Txn | undefined)[] = rows.map(() => undefined);
+  const claim = (i: number, t: Txn | undefined) => { if (t && !used.has(t.id)) { used.add(t.id); matches[i] = t; } };
+  rows.forEach((_, i) => claim(i, byId.get(ids[i])));
+  const byKey = new Map<string, Txn[]>();
+  for (const t of own) {
+    const k = rowKey(accountId, t);
+    if (k) byKey.set(k, [...(byKey.get(k) ?? []), t]);
+  }
+  const free = (i: number) => (byKey.get(rowKey(accountId, rows[i]) ?? '') ?? []).filter((t) => !used.has(t.id));
+  rows.forEach((p, i) => { if (!matches[i]) claim(i, free(i).find((t) => t.description === p.description)); });
+  rows.forEach((_, i) => { if (!matches[i]) claim(i, free(i)[0]); });
+  return { ids, matches };
+}
+
 /** Rows a new reading of a statement found that the app doesn't have yet, and rows it reads differently. */
 export function diffRescan(state: AppState, importId: string, result: ParseResult): RescanResult {
   const rec = state.imports.find((i) => i.id === importId);
   if (!rec) return { result, missing: [], corrected: [], matched: 0 };
   const account = state.accounts.find((a) => a.id === rec.accountId) ?? { id: rec.accountId, bank: result.meta.bank, number: rec.accountId };
   const ctx = contextFor(state, account);
-  const existingIds = new Set(state.txns.map((t) => t.id));
-  const byKey = new Map<string, Txn>();
-  for (const t of state.txns) {
-    if (t.accountId !== account.id) continue;
-    const k = rowKey(t.accountId, t);
-    if (k) byKey.set(k, t);
-  }
+  const { ids, matches } = matchRows(state, account.id, result.txns);
   const missing: Txn[] = [];
   const corrected: { id: string; description: string }[] = [];
   let matched = 0;
   result.txns.forEach((p, i) => {
-    const k = rowKey(account.id, p);
-    const same = k ? byKey.get(k) : undefined;
+    const same = matches[i];
     if (same) {
       matched++;
       if (same.description !== p.description) corrected.push({ id: same.id, description: p.description });
       return;
     }
-    const id = txnId(account.id, p, i);
-    if (existingIds.has(id)) { matched++; return; }
-    existingIds.add(id);
     const merchant = extractMerchant(p.description);
     const c = categorize(p, merchant, ctx, account.id);
     missing.push({
-      ...p, id, accountId: account.id, importId: rec.id, importedAt: Date.now(),
+      ...p, id: ids[i], accountId: account.id, importId: rec.id, importedAt: Date.now(),
       kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
       merchantKey: merchant.key, merchantName: merchant.name,
     });
