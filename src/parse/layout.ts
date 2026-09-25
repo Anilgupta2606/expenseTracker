@@ -150,24 +150,37 @@ export function parseLayout(pages: Page[], opts: LayoutOptions = {}): ParseResul
     const descItems = (l: Line) =>
       l.items.filter((i) => i.x >= descLeft && i.x < c.amountLeft - 30 && !(i !== l.items[0] && DATE_ITEM_RE.test(i.s)));
 
+    const makeRow = (l: Line, before: { x: number; text: string }[]): Row => {
+      const dateItem = dateOf(l)!;
+      const amounts = l.items.filter((i) => i.x >= c.amountLeft - 30 && AMOUNT_RE.test(i.s));
+      const ds = descItems(l).filter((i) => i !== dateItem);
+      // Reference numbers sit in their own column between narration and amounts.
+      const refItem = ds.length > 1 && /^[A-Z0-9]{10,}$/.test(ds[ds.length - 1].s) ? ds[ds.length - 1] : undefined;
+      const text = ds.filter((i) => i !== refItem).map((i) => i.s).join(' ');
+      return {
+        date: parseDate(dateItem.s)!,
+        amounts,
+        descLines: [...before, ...(text ? [{ x: ds[0].x, text }] : [])],
+        ref: refItem?.s,
+        cols: c,
+      };
+    };
+
+    // Layouts that centre each description around its date line (ICICI) are
+    // split by structure: a short payee line followed by "UPI/…", "NEFT-…" etc.
+    const blocks = segmentCentered(body, isAnchor, descItems, gap, preLine);
+    if (blocks) {
+      for (const cont of blocks.continuation) rows[rows.length - 1]?.descLines.push(cont);
+      for (const { anchor, lines } of blocks.rows) rows.push(makeRow(anchor, lines));
+      continue;
+    }
+
     let pending: { x: number; text: string }[] = [];
     let lastY = Infinity;
     for (let k = 0; k < body.length; k++) {
       const l = body[k];
       if (isAnchor(l)) {
-        const dateItem = dateOf(l)!;
-        const amounts = l.items.filter((i) => i.x >= c.amountLeft - 30 && AMOUNT_RE.test(i.s));
-        const ds = descItems(l).filter((i) => i !== dateItem);
-        // Reference numbers sit in their own column between narration and amounts.
-        const refItem = ds.length > 1 && /^[A-Z0-9]{10,}$/.test(ds[ds.length - 1].s) ? ds[ds.length - 1] : undefined;
-        const text = ds.filter((i) => i !== refItem).map((i) => i.s).join(' ');
-        rows.push({
-          date: parseDate(dateItem.s)!,
-          amounts,
-          descLines: [...pending, ...(text ? [{ x: ds[0].x, text }] : [])],
-          ref: refItem?.s,
-          cols: c,
-        });
+        rows.push(makeRow(l, pending));
         pending = [];
         lastY = l.y;
         continue;
@@ -257,4 +270,69 @@ function joinDescription(lines: { x: number; text: string }[], bank: string): st
     }
   }
   return out.replace(/\s+/g, ' ').trim();
+}
+
+/** First lines of a transaction remark in Indian bank statements. */
+const REMARK_START = /^(UPI|MMT|IMPS|NEFT|RTGS|CMS|N?ACH|ECS|BIL|BPAY|BBPS|INFT?|VPS|IPS|POS|ATM|NWD|ATW|CLG|TRF|EBA|SMO|RCHG|DTAX|IDTX|PAVC|LNPY|CCWD|PAYC|TOP|VAT|MAT|NFS|SGB|INT|DD|CHQ|CASH|MB|IB)\s*[/\-:]/i;
+
+interface TextLine { y: number; x: number; text: string }
+
+/**
+ * Splits a page whose descriptions are centred on the date line into one
+ * block per transaction. Returns null when the layout doesn't look like that
+ * or the blocks don't line up one-to-one with the date lines.
+ */
+function segmentCentered(
+  body: Line[],
+  isAnchor: (l: Line) => boolean,
+  descItems: (l: Line) => Item[],
+  gap: number,
+  preLine: number,
+): { rows: { anchor: Line; lines: TextLine[] }[]; continuation: TextLine[] } | null {
+  const anchors = body.filter(isAnchor);
+  if (!anchors.length) return null;
+  // Only for centred layouts: some description line sits just above a date line.
+  const centred = body.some((l, k) => !isAnchor(l) && body[k + 1] && isAnchor(body[k + 1]) && l.y - body[k + 1].y < gap * preLine && descItems(l).length);
+  if (!centred) return null;
+
+  // Text lines in reading order, stopping at footer text far below the last row.
+  const lines: TextLine[] = [];
+  let lastY = Infinity;
+  for (const l of body) {
+    if (isAnchor(l)) { lastY = l.y; continue; }
+    const items = descItems(l);
+    if (!items.length) continue;
+    if (lastY !== Infinity && lastY - l.y > gap * 2.5) break;
+    lines.push({ y: l.y, x: items[0].x, text: items.map((i) => i.s).join(' ') });
+    lastY = l.y;
+  }
+  const isStart = (t: string) => REMARK_START.test(t.trim());
+  const isLabel = (k: number) => !isStart(lines[k].text) && lines[k].text.length <= 30 &&
+    k + 1 < lines.length && isStart(lines[k + 1].text) && lines[k].y - lines[k + 1].y <= gap * 1.5;
+
+  const blocks: TextLine[][] = [];
+  const continuation: TextLine[] = [];
+  for (let k = 0; k < lines.length; k++) {
+    const begins = isLabel(k) || (isStart(lines[k].text) && !(k > 0 && isLabel(k - 1)));
+    if (begins) blocks.push([lines[k]]);
+    else if (blocks.length) blocks[blocks.length - 1].push(lines[k]);
+    else continuation.push(lines[k]);
+  }
+  if (!blocks.length) return null;
+
+  // Each block belongs to the date line inside (or right next to) its span.
+  const taken = new Set<Line>();
+  const rows: { anchor: Line; lines: TextLine[] }[] = [];
+  for (const b of blocks) {
+    const top = b[0].y + gap * 0.8, bottom = b[b.length - 1].y - gap * 0.8, mid = (b[0].y + b[b.length - 1].y) / 2;
+    const candidates = anchors.filter((a) => !taken.has(a) && a.y <= top && a.y >= bottom)
+      .sort((a, z) => Math.abs(a.y - mid) - Math.abs(z.y - mid));
+    if (!candidates.length) return null;
+    taken.add(candidates[0]);
+    rows.push({ anchor: candidates[0], lines: b });
+  }
+  // Date lines without a block keep their own text (if any).
+  for (const a of anchors) if (!taken.has(a)) rows.push({ anchor: a, lines: [] });
+  rows.sort((a, z) => z.anchor.y - a.anchor.y);
+  return { rows, continuation };
 }

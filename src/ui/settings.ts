@@ -1,5 +1,6 @@
 import type { AppState } from '../types';
 import { recategorizeAll } from '../importer';
+import { DEFAULT_GEMINI_MODEL } from '../categorize/gemini';
 import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, toast, update } from './app';
@@ -73,6 +74,20 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
+      <h2>Free AI check (Google Gemini)</h2>
+      <p class="small muted" style="margin-top:-4px">Optional. On the Upload screen, <strong>AI check</strong> sends a statement's rows to Google Gemini to suggest cleaner payee names and categories and to flag rows that look mixed up. You review every suggestion before anything changes.</p>
+      <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers (account, phone, reference) replaced by # and your name replaced by SELF. Balances and the PDF itself are never sent. On Google's free tier, Google may use what you send to improve its products.</p>
+      <ol class="small muted" style="padding-left:18px;margin:0 0 12px">
+        <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with a Google account.</li>
+        <li>Create an API key (free, no card needed) and paste it below.</li>
+      </ol>
+      <label class="field"><span>Gemini API key</span><input type="password" id="gkey" value="${esc(s.geminiKey ?? '')}" autocomplete="off" placeholder="AIza…"></label>
+      <label class="field"><span>Model</span><input type="text" id="gmodel" value="${esc(s.geminiModel ?? '')}" placeholder="${DEFAULT_GEMINI_MODEL}" autocapitalize="none" spellcheck="false">
+        <span class="tiny">Leave empty for ${DEFAULT_GEMINI_MODEL}. Change it only if Google renames its free model.</span></label>
+      <div class="row wrap"><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
+    </div>
+
+    <div class="card">
       <h2>Your data</h2>
       <p class="small muted" style="margin-top:-4px">Stored only in this browser. Export a backup now and then, especially before clearing Safari data.</p>
       <div class="row wrap">
@@ -120,15 +135,25 @@ export function renderSettings(root: HTMLElement) {
     if (!(await askConfirm(`Delete ${id} and all its transactions?`, 'Delete account'))) return;
     await update((st) => recategorizeAll({ ...st, accounts: st.accounts.filter((a) => a.id !== id), txns: st.txns.filter((t) => t.accountId !== id), imports: st.imports.filter((i) => i.accountId !== id) }));
   }));
+  root.querySelector('#save-gemini')!.addEventListener('click', async () => {
+    const geminiKey = val('gkey').trim() || undefined;
+    const geminiModel = val('gmodel').trim() || undefined;
+    await update((st) => ({ ...st, settings: { ...st.settings, geminiKey, geminiModel } }));
+    toast(geminiKey ? 'Gemini key saved on this device' : 'Saved');
+  });
+  root.querySelector('#clear-gemini')?.addEventListener('click', async () => {
+    await update((st) => ({ ...st, settings: { ...st.settings, geminiKey: undefined } }));
+    toast('Gemini key removed');
+  });
   root.querySelector('#export')!.addEventListener('click', () => {
-    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify({ ...app.state, auth: undefined }));
+    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify({ ...app.state, auth: undefined, settings: { ...app.state.settings, geminiKey: undefined } }));
   });
   const restoreFrom = async (textData: string) => {
     try {
       const data = JSON.parse(textData) as AppState;
       if (!Array.isArray(data.txns) || !Array.isArray(data.accounts)) throw new Error('Not a backup file');
       if (!(await askConfirm(`Replace current data with ${data.txns.length} transactions from the backup?`, 'Restore', false))) return;
-      await update((st) => ({ ...migrate(data), auth: st.auth }));
+      await update((st) => ({ ...migrate(data), auth: st.auth, settings: { ...migrate(data).settings, geminiKey: st.settings.geminiKey } }));
       toast('Backup restored');
     } catch (err) {
       toast(`Could not restore: ${(err as Error).message}`);
@@ -139,7 +164,7 @@ export function renderSettings(root: HTMLElement) {
     if (file) await restoreFrom(await file.text());
   });
   root.querySelector('#copy-backup')!.addEventListener('click', async () => {
-    const json = JSON.stringify({ ...app.state, auth: undefined });
+    const json = JSON.stringify({ ...app.state, auth: undefined, settings: { ...app.state.settings, geminiKey: undefined } });
     try {
       await navigator.clipboard.writeText(json);
       toast('Backup copied. Paste it into Notes or a file to keep it.');

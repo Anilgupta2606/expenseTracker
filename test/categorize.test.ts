@@ -49,6 +49,9 @@ describe('categorize', () => {
   it('categorises merchants and refunds', () => {
     expect(cat('UPI/Swiggy/swiggy@icici/Payment fo/ICICI BANK/618')).toBe('spend/Food & Dining');
     expect(cat('UPI/Netflix/netflix.bdauto/Execution/HDFC BANK/103')).toBe('spend/Subscriptions');
+    expect(cat('UPI/DSB HOSPITALITY/dsb@icici/Dinner/ICICI/1')).toBe('spend/Food & Dining');
+    expect(cat('UPI/CITY HOSPITAL/cityhosp@icici/OPD/ICICI/1')).toBe('spend/Health');
+    expect(cat('UPI/DLF MALL O/dlfmall@ybl/Payment/YES/1')).toBe('spend/Shopping');
     expect(cat('UPI-CBDT TIN 2 0-CBDTTIN@HDFCBANK-HDFC0MERUPI-619213596268-UPIINTENT')).toBe('spend/Taxes');
     expect(cat('200726BTT00068 DPO2720145616380 CGST')).toBe('spend/Bank Charges');
     expect(cat('UPI-AIRTEL PREPAID RECHARGE-AIRTEL@PAYTM-X-1')).toBe('spend/Mobile & Internet');

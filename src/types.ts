@@ -2,7 +2,7 @@ export type Kind = 'spend' | 'income' | 'investment' | 'transfer' | 'cc_bill' | 
 export type Direction = 'debit' | 'credit';
 
 /** Where a transaction's category came from, strongest last. */
-export type CategorySource = 'default' | 'rule' | 'self' | 'pair' | 'learned' | 'manual';
+export type CategorySource = 'default' | 'rule' | 'self' | 'pair' | 'ai' | 'learned' | 'manual';
 
 export interface ParsedTxn {
   date: string; // YYYY-MM-DD
@@ -67,6 +67,9 @@ export interface Settings {
   ownNames: string[];
   /** People whose transfers count as self transfers (e.g. spouse). */
   familyNames: string[];
+  /** Free Google Gemini key for the optional AI check (stored on this device only). */
+  geminiKey?: string;
+  geminiModel?: string;
 }
 
 /** Your own numbers for a month. Months without one inherit the latest earlier month. */
