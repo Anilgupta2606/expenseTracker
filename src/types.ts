@@ -11,6 +11,14 @@ export interface ParsedTxn {
   direction: Direction;
   balance?: number;
   ref?: string;
+  /** The AI reader's cleaned-up payee and category for this row. */
+  hint?: AiHint;
+}
+
+export interface AiHint {
+  payee: string;
+  kind: Kind;
+  category: string;
 }
 
 export interface StatementMeta {
@@ -25,6 +33,10 @@ export interface ParseResult {
   /** Rows where closing balance didn't follow from the previous row. */
   balanceMismatches: number;
   warnings: string[];
+  /** Which reader produced the rows. */
+  reader?: 'ai' | 'local';
+  /** Titles and categories were cleaned up by the AI. */
+  aiTitles?: boolean;
 }
 
 export interface Txn extends ParsedTxn {
@@ -35,6 +47,8 @@ export interface Txn extends ParsedTxn {
   source: CategorySource;
   merchantKey: string;
   merchantName: string;
+  /** Who set the title shown (merchantName): the AI or you. Unset means it is worked out from the narration. */
+  titleSet?: 'ai' | 'manual';
   /** Linked self-transfer on another account, if matched. */
   pairId?: string;
   note?: string;
@@ -60,6 +74,8 @@ export interface LearnedRule {
   /** Spend/income rules only apply to the direction they were learned on. */
   direction?: Direction;
   excluded?: boolean;
+  /** A title you gave this payee. */
+  title?: string;
   createdAt: number;
 }
 
@@ -94,6 +110,10 @@ export interface StatementImport {
   /** The original file is kept on this device for rescans. */
   hasFile?: boolean;
   rescannedAt?: number;
+  /** Read by the AI (checked against the running balance) or by the on-device reader. */
+  reader?: 'ai' | 'local';
+  /** Titles and categories were cleaned up by the AI. */
+  aiTitles?: boolean;
 }
 
 export interface AppState {

@@ -27,14 +27,16 @@ export function openAiReview(suggestions: AiSuggestion[]) {
     <div class="grab"></div>
     <h2>AI suggestions</h2>
     <p class="small muted" style="margin-top:-4px">${changes.length
-      ? `${fixable} change${fixable === 1 ? '' : 's'} suggested${mixed ? `, ${mixed} row${mixed > 1 ? 's' : ''} flagged as possibly mixed up (check those against the PDF)` : ''}.${fixable ? ' Untick anything you don\'t want.' : ''}`
+      ? `${fixable} change${fixable === 1 ? '' : 's'} suggested${mixed ? `, ${mixed} row${mixed > 1 ? 's' : ''} flagged as possibly mixed up (check those against the PDF)` : ''}.${fixable ? ' All are ticked: untick anything you don\'t want, then tap Apply.' : ''}`
       : 'The AI agrees with everything the app already has.'}</p>
+    ${fixable > 1 ? '<div class="row" style="gap:8px;margin-bottom:8px"><button class="btn small-btn" data-all>Tick all</button><button class="btn small-btn" data-none>Untick all</button></div>' : ''}
     <div class="ai-list">
       ${changes.map((c, k) => `<label class="ai-item${c.s.mixed ? ' flagged' : ''}">
         ${c.typeChanged || c.nameChanged ? `<input type="checkbox" data-k="${k}" checked>` : '<span class="ai-flag" aria-hidden="true">⚠</span>'}
         <span class="grow">
           <span class="row between"><strong class="ellipsis">${esc(c.s.payee)}</strong><span class="num small">${c.txn.direction === 'credit' ? '+' : '−'}${inrFull(c.txn.amount)}</span></span>
           <span class="tiny">${esc(c.txn.date)} · was <em>${esc(c.txn.merchantName)}</em>, ${esc(KIND_LABEL[c.txn.kind])} / ${esc(c.txn.category)}</span>
+          ${c.nameChanged ? `<span class="small">→ title: <strong>${esc(c.s.payee)}</strong></span>` : ''}
           ${c.typeChanged ? `<span class="small">→ ${esc(KIND_LABEL[c.s.kind])} / ${esc(c.s.category)}</span>` : ''}
           ${c.s.mixed ? `<span class="small bad">⚠ Looks mixed up${c.s.note ? `: ${esc(c.s.note)}` : ''}${c.typeChanged || c.nameChanged ? '' : '. Nothing to apply here: tap Rescan on the statement, or fix it by hand in Transactions.'}</span>` : c.s.note ? `<span class="tiny">${esc(c.s.note)}</span>` : ''}
         </span>
@@ -42,12 +44,24 @@ export function openAiReview(suggestions: AiSuggestion[]) {
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn grow" data-close>${changes.length ? 'Cancel' : 'Close'}</button>
-      ${fixable ? '<button class="btn primary grow" data-apply>Apply ticked</button>' : ''}
+      ${fixable ? `<button class="btn primary grow" data-apply>Apply ${fixable} change${fixable > 1 ? 's' : ''}</button>` : ''}
     </div>
   </div>`;
   const close = () => backdrop.remove();
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(); });
   backdrop.querySelector('[data-close]')!.addEventListener('click', close);
+  const boxes = () => [...backdrop.querySelectorAll<HTMLInputElement>('input[data-k]')];
+  const applyBtn = backdrop.querySelector<HTMLButtonElement>('[data-apply]');
+  // Keep the button honest about how many changes a tap will apply.
+  const refresh = () => {
+    if (!applyBtn) return;
+    const n = boxes().filter((b) => b.checked).length;
+    applyBtn.textContent = n ? `Apply ${n} change${n > 1 ? 's' : ''}` : 'Nothing ticked';
+    applyBtn.disabled = n === 0;
+  };
+  boxes().forEach((b) => b.addEventListener('change', refresh));
+  backdrop.querySelector('[data-all]')?.addEventListener('click', () => { boxes().forEach((b) => { b.checked = true; }); refresh(); });
+  backdrop.querySelector('[data-none]')?.addEventListener('click', () => { boxes().forEach((b) => { b.checked = false; }); refresh(); });
   backdrop.querySelector('[data-apply]')?.addEventListener('click', async () => {
     const picked = new Map<string, AiSuggestion>();
     backdrop.querySelectorAll<HTMLInputElement>('input[data-k]').forEach((box) => {
@@ -59,7 +73,7 @@ export function openAiReview(suggestions: AiSuggestion[]) {
       ...st,
       txns: st.txns.map((t) => {
         const s = picked.get(t.id);
-        return s ? { ...t, kind: s.kind, category: s.category, merchantName: s.payee, source: 'ai' as const } : t;
+        return s ? { ...t, kind: s.kind, category: s.category, merchantName: s.payee, titleSet: 'ai' as const, source: 'ai' as const } : t;
       }),
     }));
     toast(`Applied ${picked.size} suggestion${picked.size > 1 ? 's' : ''}`, { label: 'View', run: () => navigate('#txns') });
