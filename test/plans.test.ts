@@ -137,3 +137,18 @@ describe('card bills and the Counted checkbox', () => {
     expect(m.rules[0]).toMatchObject({ kind: 'spend', excluded: true });
   });
 });
+
+describe('all time', () => {
+  it('adds up every month with its own plan', async () => {
+    const { summarizeAll } = await import('../src/plans');
+    const { emptyState } = await import('../src/store');
+    const t = (date: string, amount: number, kind: 'spend' | 'investment') => ({ id: date + amount, accountId: 'a', importId: 'i', date, amount, direction: 'debit' as const, description: 'x', kind, category: kind === 'spend' ? 'Shopping' : 'Stocks', source: 'rule' as const, merchantKey: 'X', merchantName: 'X', importedAt: 0 });
+    const state = { ...emptyState(), plans: { '2026-07': { income: 100000, expectedSpend: 40000, expectedInvestment: 20000 }, '2026-08': { income: 120000, expectedSpend: 50000, expectedInvestment: 30000 } } };
+    const txns = [t('2026-07-05', 30000, 'spend'), t('2026-07-06', 10000, 'investment'), t('2026-08-05', 60000, 'spend')];
+    const s = summarizeAll(state, ['2026-08', '2026-07'], txns);
+    expect(s).toMatchObject({ month: 'all', planSet: true, plan: { income: 220000, expectedSpend: 90000, expectedInvestment: 50000 } });
+    expect(s.actual.spend).toBe(90000);
+    expect(s.actual.invested).toBe(10000);
+    expect(s.saved).toBe(220000 - 90000 - 10000);
+  });
+});

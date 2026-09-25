@@ -99,6 +99,28 @@ export function summarize(state: AppState, month: string, txns: Txn[]): MonthSum
   };
 }
 
+/**
+ * Several months added up (for "All time"): each month's own or carried-forward
+ * plan and actuals are summed, so income, budget and saving cover the same months.
+ */
+export function summarizeAll(state: AppState, months: string[], txns: Txn[]): MonthSummary {
+  const parts = months.map((m) => summarize(state, m, txns));
+  const sum = (pick: (s: MonthSummary) => number) => parts.reduce((a, s) => a + pick(s), 0);
+  const actual = Object.fromEntries((Object.keys(actualsFor([])) as (keyof MonthActuals)[])
+    .map((k) => [k, sum((s) => s.actual[k])])) as unknown as MonthActuals;
+  const plan: MonthPlan = { income: sum((s) => s.plan.income), expectedSpend: sum((s) => s.plan.expectedSpend), expectedInvestment: sum((s) => s.plan.expectedInvestment) };
+  return {
+    month: 'all',
+    plan,
+    planSet: parts.some((s) => s.planSet),
+    actual,
+    spendOver: actual.spend - plan.expectedSpend,
+    investOver: actual.invested - plan.expectedInvestment,
+    saved: plan.income - actual.spend - actual.invested,
+    plannedSaving: plan.income - plan.expectedSpend - plan.expectedInvestment,
+  };
+}
+
 /** Months from the first transaction or plan up to the latest (inclusive), oldest first. */
 export function monthRange(state: AppState): string[] {
   const all = [...state.txns.map((t) => t.date.slice(0, 7)), ...Object.keys(state.plans)].sort();

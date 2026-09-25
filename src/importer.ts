@@ -328,7 +328,7 @@ export function applyRescan(state: AppState, importId: string, rescan: RescanRes
   const rec = state.imports.find((i) => i.id === importId);
   const bank = rescan.result.meta.bank;
   const accounts = bank && bank !== 'Unknown'
-    ? state.accounts.map((a) => (a.id === rec?.accountId ? { ...a, bank } : a))
+    ? state.accounts.map((a) => (a.id === rec?.accountId && !a.bankSetByHand ? { ...a, bank } : a))
     : state.accounts;
   return recategorizeAll({ ...state, accounts, imports, txns });
 }

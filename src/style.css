@@ -407,3 +407,5 @@ table.simple a { color: inherit; }
 .pm-label { font-size: 12px; color: var(--text-3); padding: 6px 8px 2px; }
 .pm-theme { display: grid !important; grid-template-columns: repeat(3, 1fr); margin: 0 4px 6px; }
 .pm-theme button { padding: 6px 0; }
+
+.bank-select { width: auto; display: inline-block; padding: 4px 28px 4px 8px; font-size: 14px; }
