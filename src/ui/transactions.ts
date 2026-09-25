@@ -114,7 +114,8 @@ function group(key: string, label: string, list: Txn[], cls: string): string {
 
 export function renderTransactions(root: HTMLElement) {
   const { state, filters } = app;
-  const txns = applyFilters(state.txns, filters);
+  const picked = filters.picked ? new Set(filters.picked.ids) : null;
+  const txns = applyFilters(state.txns, filters).filter((t) => !picked || picked.has(t.id));
   const byDay = new Map<string, Txn[]>();
   for (const t of txns) byDay.set(t.date, [...(byDay.get(t.date) ?? []), t]);
   // Category groups: biggest money movement first, each with its subtotal.
@@ -133,6 +134,7 @@ export function renderTransactions(root: HTMLElement) {
     ${filterBar()}
     <input type="search" placeholder="Search name, category or amount" value="${esc(filters.search)}" id="search" style="margin-bottom:10px">
     <div class="chips">
+      ${filters.picked ? `<button class="chip on" data-clear-picked title="Show all transactions again">✦ ${esc(filters.picked.label)} ✕</button>` : ''}
       ${KIND_CHIPS.map((k) => `<button class="chip${filters.kind === k && !filters.category ? ' on' : ''}" data-kind="${k}">${k === 'all' ? 'All' : k === 'review' ? 'Needs review' : k === 'excluded' ? 'Not counted' : esc(KIND_LABEL[k])}</button>`).join('')}
       ${filters.category ? `<button class="chip on" data-kind="${filters.kind}" data-clear-cat>${esc(filters.category)} ✕</button>` : ''}
     </div>
@@ -181,7 +183,11 @@ export function renderTransactions(root: HTMLElement) {
     filters.groupBy = el.dataset.group as Filters['groupBy'];
     render();
   }));
-  root.querySelectorAll<HTMLElement>('.chip').forEach((el) => el.addEventListener('click', () => {
+  root.querySelector('[data-clear-picked]')?.addEventListener('click', () => {
+    filters.picked = undefined;
+    render();
+  });
+  root.querySelectorAll<HTMLElement>('.chip[data-kind]').forEach((el) => el.addEventListener('click', () => {
     filters.kind = el.dataset.kind as Filters['kind'];
     filters.category = '';
     render();

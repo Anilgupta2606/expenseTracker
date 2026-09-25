@@ -10,6 +10,8 @@ export interface Filters {
   groupBy: 'date' | 'category';
   /** Months shown in the charts: 6, 12 or 0 for all. */
   range: number;
+  /** Rows picked by an Assistant answer, shown on their own until cleared. */
+  picked?: { label: string; ids: string[] };
 }
 
 export const app = {
