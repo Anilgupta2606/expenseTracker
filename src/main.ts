@@ -11,7 +11,7 @@ import { isSignedIn, setSignedIn, usernameOf } from './auth';
 import { LOGO, renderLogin } from './ui/login';
 import { esc } from './ui/format';
 import { applyTheme, getTheme, setTheme, type Theme } from './theme';
-import { planLink } from './links';
+import { planLink, planOpener } from './links';
 
 applyTheme();
 const initialsOf = (name: string) => (name.trim().slice(0, 2) || '?').toUpperCase();
@@ -89,7 +89,7 @@ function toggleMenu(anchor: HTMLElement) {
       <div class="pm-head"><span class="avatar-round">${esc(initialsOf(name))}</span><span><span class="tiny">Signed in as</span><strong style="display:block">${esc(name)}</strong></span></div>
       <a href="#settings" class="pm-item" role="menuitem" data-pm-settings>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS.gear}</svg>Settings</a>
-      ${link ? `<a href="${esc(link)}" target="_blank" rel="noopener" class="pm-item" role="menuitem" data-pm-plan>
+      ${link ? `<a href="${esc(planOpener(link))}" target="_blank" rel="noopener" class="pm-item" role="menuitem" data-pm-plan>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>Investment plan<span class="pm-ext" aria-label="opens in a new tab">↗</span></a>` : ''}
       <div class="pm-label">Theme</div>
       <div class="seg-toggle pm-theme" role="group" aria-label="Theme">${THEMES.map((t) => `<button data-theme-pick="${t.value}" class="${theme === t.value ? 'on' : ''}" aria-pressed="${theme === t.value}">${t.label}</button>`).join('')}</div>

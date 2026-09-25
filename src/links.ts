@@ -8,3 +8,13 @@ export function planLink(settings: Settings): string | null {
   const v = settings.planLink ?? DEFAULT_PLAN_LINK;
   return /^https:\/\//i.test(v.trim()) ? v.trim() : null;
 }
+
+/**
+ * The link the profile menu uses: a small page on this site that moves on to
+ * the plan by itself. On iPhone a tap straight onto a claude.ai link is handed
+ * to the Claude app; stepping through this page usually keeps it in the
+ * browser tab. Other links are opened directly.
+ */
+export function planOpener(link: string): string {
+  return /^https:\/\/claude\.ai\//i.test(link) ? `./open-plan.html#${encodeURIComponent(link)}` : link;
+}
