@@ -388,3 +388,22 @@ table.simple a { color: inherit; }
 .group-head[aria-expanded="true"] .chev { transform: rotate(90deg); }
 .group-head[aria-expanded="false"] { margin-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .group-head .chev { transition: none; } }
+
+/* Profile button and menu */
+.profile-btn { display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 4px; border-radius: 999px; color: inherit; font: inherit; cursor: pointer; text-align: left; }
+.profile-btn.top { margin-left: auto; }
+.profile-btn.side { width: 100%; border-radius: 10px; padding: 8px; }
+.profile-btn:hover, .profile-btn.active { background: var(--surface-2); }
+.profile-btn .who { display: block; font-weight: 600; font-size: 14px; }
+.profile-btn .grow .tiny { display: block; white-space: nowrap; }
+.profile-btn .grow { min-width: 0; }
+.avatar-round { display: inline-grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-weight: 650; font-size: 13px; letter-spacing: 0.02em; }
+.profile-menu { position: fixed; z-index: 60; width: 248px; max-width: calc(100vw - 16px); background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 10px 30px rgb(16 24 40 / 0.18); padding: 8px; display: grid; gap: 4px; }
+.pm-head { display: flex; align-items: center; gap: 10px; padding: 6px 6px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.pm-item { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 8px; background: none; border: 0; font: inherit; font-size: 14px; color: var(--text); text-decoration: none; cursor: pointer; text-align: left; width: 100%; }
+.pm-item svg { width: 18px; height: 18px; flex: none; }
+.pm-item:hover, .pm-item:focus-visible { background: var(--surface-2); outline: none; }
+.pm-item.danger { color: var(--danger); }
+.pm-label { font-size: 12px; color: var(--text-3); padding: 6px 8px 2px; }
+.pm-theme { display: grid !important; grid-template-columns: repeat(3, 1fr); margin: 0 4px 6px; }
+.pm-theme button { padding: 6px 0; }

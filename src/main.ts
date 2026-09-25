@@ -9,6 +9,11 @@ import { renderTransactions } from './ui/transactions';
 import { renderAssistant } from './ui/assistant';
 import { isSignedIn, setSignedIn, usernameOf } from './auth';
 import { LOGO, renderLogin } from './ui/login';
+import { esc } from './ui/format';
+import { applyTheme, getTheme, setTheme, type Theme } from './theme';
+
+applyTheme();
+const initialsOf = (name: string) => (name.trim().slice(0, 2) || '?').toUpperCase();
 
 const ICONS = {
   home: '<path d="M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
@@ -18,12 +23,13 @@ const ICONS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
 };
 
-const ROUTES: { hash: string; label: string; icon: keyof typeof ICONS; view: (root: HTMLElement) => void }[] = [
+const ROUTES: { hash: string; label: string; icon: keyof typeof ICONS; view: (root: HTMLElement) => void; inMenu?: boolean }[] = [
   { hash: '#overview', label: 'Overview', icon: 'home', view: renderDashboard },
   { hash: '#txns', label: 'Transactions', icon: 'list', view: renderTransactions },
   { hash: '#upload', label: 'Upload', icon: 'upload', view: renderImport },
   { hash: '#assistant', label: 'Assistant', icon: 'spark', view: renderAssistant },
-  { hash: '#settings', label: 'Settings', icon: 'gear', view: renderSettings },
+  // Settings lives in the profile menu, not the tab bar.
+  { hash: '#settings', label: 'Settings', icon: 'gear', view: renderSettings, inMenu: true },
 ];
 
 const root = document.getElementById('app')!;
@@ -33,21 +39,87 @@ function mountShell() {
   root.innerHTML = `<div class="shell">
     <nav class="sidebar" aria-label="Main">
       <div class="side-brand">${LOGO}<span class="brand-name">Expense Tracker</span></div>
-      <div class="tabbar">${ROUTES.map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
+      <div class="tabbar">${ROUTES.filter((r) => !r.inMenu).map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[r.icon]}</svg><span>${r.label}</span></a>`).join('')}</div>
-      <div class="side-user"><span class="tiny">Signed in as <strong id="who"></strong></span><button class="link-btn" data-signout>Sign out</button></div>
+      <div class="side-user">${profileButton('side')}</div>
     </nav>
     <div class="content">
-      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span><button class="link-btn" data-signout aria-label="Sign out">Sign out</button></header>
+      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span>${profileButton('top')}</header>
       <main class="app" id="view"></main>
     </div>
   </div>`;
   view = document.getElementById('view')!;
-  root.querySelectorAll('[data-signout]').forEach((b) => b.addEventListener('click', () => {
-    setSignedIn(false);
-    render();
+  root.querySelectorAll<HTMLElement>('[data-profile]').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleMenu(b);
   }));
 }
+
+/** The round avatar that opens the profile menu. */
+function profileButton(where: 'top' | 'side'): string {
+  return `<button class="profile-btn ${where}" data-profile aria-haspopup="menu" aria-expanded="false" aria-label="Profile, settings and theme">
+    <span class="avatar-round" data-initials></span>${where === 'side' ? '<span class="grow"><span class="who" data-who></span><span class="tiny">Settings &amp; theme</span></span>' : ''}
+  </button>`;
+}
+
+const THEMES: { value: Theme; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+];
+
+function closeMenu() {
+  document.querySelector('.profile-menu')?.remove();
+  document.querySelectorAll('[data-profile]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+}
+
+function toggleMenu(anchor: HTMLElement) {
+  const open = document.querySelector('.profile-menu');
+  closeMenu();
+  if (open) return;
+  const name = usernameOf(app.state);
+  const menu = document.createElement('div');
+  menu.className = 'profile-menu';
+  menu.setAttribute('role', 'menu');
+  const drawMenu = () => {
+    const theme = getTheme();
+    menu.innerHTML = `
+      <div class="pm-head"><span class="avatar-round">${esc(initialsOf(name))}</span><span><span class="tiny">Signed in as</span><strong style="display:block">${esc(name)}</strong></span></div>
+      <a href="#settings" class="pm-item" role="menuitem" data-pm-settings>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS.gear}</svg>Settings</a>
+      <div class="pm-label">Theme</div>
+      <div class="seg-toggle pm-theme" role="group" aria-label="Theme">${THEMES.map((t) => `<button data-theme-pick="${t.value}" class="${theme === t.value ? 'on' : ''}" aria-pressed="${theme === t.value}">${t.label}</button>`).join('')}</div>
+      <button class="pm-item danger" role="menuitem" data-pm-signout>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M12 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h7"/></svg>Sign out</button>`;
+    menu.querySelector('[data-pm-settings]')!.addEventListener('click', closeMenu);
+    menu.querySelector('[data-pm-signout]')!.addEventListener('click', () => { closeMenu(); setSignedIn(false); render(); });
+    menu.querySelectorAll<HTMLElement>('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => {
+      setTheme(b.dataset.themePick as Theme);
+      drawMenu();
+      // Charts read colours when drawn.
+      render();
+    }));
+  };
+  drawMenu();
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  // Open below the top-bar avatar, or above the sidebar one.
+  const r = anchor.getBoundingClientRect();
+  if (anchor.classList.contains('side')) {
+    menu.style.left = `${r.left}px`;
+    menu.style.bottom = `${window.innerHeight - r.top + 8}px`;
+  } else {
+    menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    menu.style.top = `${r.bottom + 8}px`;
+  }
+  document.body.append(menu);
+  anchor.setAttribute('aria-expanded', 'true');
+  menu.querySelector<HTMLElement>('[data-pm-settings]')?.focus();
+}
+
+document.addEventListener('click', closeMenu);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+window.addEventListener('resize', closeMenu);
+window.addEventListener('hashchange', closeMenu);
 
 let lastHash = '';
 function render() {
@@ -59,10 +131,13 @@ function render() {
   }
   document.body.classList.remove('signed-out');
   if (!view) mountShell();
-  root.querySelector('#who')!.textContent = usernameOf(app.state);
+  const name = usernameOf(app.state);
+  root.querySelectorAll('[data-who]').forEach((el) => { el.textContent = name; });
+  root.querySelectorAll('[data-initials]').forEach((el) => { el.textContent = initialsOf(name); });
   const hash = ROUTES.some((r) => r.hash === location.hash) ? location.hash : '#overview';
   const route = ROUTES.find((r) => r.hash === hash)!;
   document.querySelectorAll<HTMLElement>('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.hash === hash));
+  document.querySelectorAll<HTMLElement>('[data-profile]').forEach((b) => b.classList.toggle('active', hash === '#settings'));
   const scroll = window.scrollY;
   route.view(view!);
   // Keep the scroll position when re-rendering the same screen.
