@@ -86,7 +86,11 @@ export interface Context {
   rules: LearnedRule[];
 }
 
-interface Result { kind: Kind; category: string; source: CategorySource; excluded?: boolean }
+interface Result {
+  kind: Kind; category: string; source: CategorySource; excluded?: boolean; title?: string;
+  /** A match on a merchant name only, which the AI reader may overrule. */
+  weak?: boolean;
+}
 
 function matchRule(rules: Rule[], d: string, dir: string): Rule | undefined {
   return rules.find((r) => (!r.dir || r.dir === dir) && r.re.test(d));
@@ -123,7 +127,7 @@ function looksLikePerson(merchant: Merchant, d: string): boolean {
 export function categorize(t: ParsedTxn, merchant: Merchant, ctx: Context, accountId?: string): Result {
   const d = norm(t.description);
   const learned = ctx.rules.find((r) => r.key === merchant.key && (!r.direction || r.direction === t.direction));
-  if (learned) return { kind: learned.kind, category: learned.category, source: 'learned', excluded: learned.excluded };
+  if (learned) return { kind: learned.kind, category: learned.category, source: 'learned', excluded: learned.excluded, title: learned.title };
 
   const pr = matchRule(PRIORITY_RULES, d, t.direction);
   if (pr) return { kind: pr.kind, category: pr.category, source: 'rule' };
@@ -132,8 +136,8 @@ export function categorize(t: ParsedTxn, merchant: Merchant, ctx: Context, accou
 
   const mr = matchRule(MERCHANT_RULES, d, 'debit');
   if (mr) {
-    if (t.direction === 'debit') return { kind: mr.kind, category: mr.category, source: 'rule' };
-    return { kind: 'income', category: 'Refund & Cashback', source: 'rule' };
+    if (t.direction === 'debit') return { kind: mr.kind, category: mr.category, source: 'rule', weak: true };
+    return { kind: 'income', category: 'Refund & Cashback', source: 'rule', weak: true };
   }
 
   if (looksLikePerson(merchant, d)) {

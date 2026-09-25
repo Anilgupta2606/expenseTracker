@@ -1,4 +1,4 @@
-import type { Kind, Settings, Txn } from '../types';
+import type { Kind, ParsedTxn, Settings, Txn } from '../types';
 import { CATEGORIES, isValidCategory } from './categories';
 
 /**
@@ -34,8 +34,8 @@ export async function listGeminiModels(key: string): Promise<string[]> {
     .filter((n) => /^gemini/.test(n) && !/tts|image|audio|live|embed|computer-use|robotics|transcribe|omni|customtools/.test(n));
 }
 
-const KINDS: Kind[] = ['spend', 'investment', 'income', 'transfer', 'cc_bill'];
-const ALL_CATEGORIES = [...new Set(KINDS.flatMap((k) => CATEGORIES[k]))];
+export const AI_KINDS: Kind[] = ['spend', 'investment', 'income', 'transfer', 'cc_bill'];
+export const ALL_CATEGORIES = [...new Set(AI_KINDS.flatMap((k) => CATEGORIES[k]))];
 
 export interface AiSuggestion {
   id: string;
@@ -52,7 +52,9 @@ export interface AiSuggestion {
  * long numbers (account, phone, reference numbers) and your own names masked.
  * Balances and account numbers are never sent.
  */
-export function maskRow(t: Txn, ownNames: string[]): { date: string; amount: number; direction: string; text: string } {
+type RowLike = Pick<ParsedTxn, 'date' | 'amount' | 'direction' | 'description'>;
+
+export function maskRow(t: RowLike, ownNames: string[]): { date: string; amount: number; direction: string; text: string } {
   let text = t.description.replace(/\d{5,}/g, (m) => '#'.repeat(Math.min(m.length, 6)));
   for (const n of ownNames) {
     const name = n.trim();
@@ -70,7 +72,7 @@ For every row return:
 - payee: the real merchant or person, cleaned up (e.g. "Swiggy", "DSB Hospitality", "Rakesh Jain"). ICICI narrations start with a short payee label followed by "UPI/<payee>/<vpa>/...": use the UPI payee.
 - kind: spend, investment, income, transfer (between SELF's own accounts) or cc_bill (paying SELF's credit card bill).
 - category, one of the allowed categories for that kind:
-${KINDS.map((k) => `  ${k}: ${CATEGORIES[k].join(', ')}`).join('\n')}
+${AI_KINDS.map((k) => `  ${k}: ${CATEGORIES[k].join(', ')}`).join('\n')}
 - mixed: true if the narration seems to contain text from two different transactions (for example the leading label names one payee but the UPI part names another).
 - note: a few words when you are unsure or mixed is true, otherwise "".
 Hospitality businesses are usually restaurants or hotels, not hospitals. Use "Uncategorised" only when the text gives no clue.`;
@@ -85,7 +87,7 @@ const SCHEMA = {
         properties: {
           i: { type: 'INTEGER' },
           payee: { type: 'STRING' },
-          kind: { type: 'STRING', enum: KINDS },
+          kind: { type: 'STRING', enum: AI_KINDS },
           category: { type: 'STRING', enum: ALL_CATEGORIES },
           mixed: { type: 'BOOLEAN' },
           note: { type: 'STRING' },
@@ -97,7 +99,7 @@ const SCHEMA = {
   required: ['rows'],
 };
 
-async function callGemini(key: string, model: string, rows: ReturnType<typeof maskRow>[]): Promise<{ i: number; payee: string; kind: Kind; category: string; mixed: boolean; note: string }[]> {
+async function callGemini<T>(key: string, model: string, prompt: string, schema: object): Promise<T> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
   let res: Response;
   try {
@@ -105,8 +107,8 @@ async function callGemini(key: string, model: string, rows: ReturnType<typeof ma
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: `${PROMPT}\n\nRows:\n${JSON.stringify(rows.map((r, i) => ({ i, ...r })))}` }] }],
-        generationConfig: { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0 },
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0 },
       }),
     });
   } catch {
@@ -124,17 +126,22 @@ async function callGemini(key: string, model: string, rows: ReturnType<typeof ma
   const data = await res.json();
   const text: string = data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? '').join('') ?? '';
   if (!text) throw new Error('Gemini returned an empty answer. Try again.');
-  return (JSON.parse(text) as { rows: { i: number; payee: string; kind: Kind; category: string; mixed: boolean; note: string }[] }).rows;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    // A cut-off answer (too long) counts like a busy model, so the next one is tried.
+    throw new ModelUnavailable('Gemini returned an incomplete answer. Try again.', 502);
+  }
 }
 
 /** Asks one model, retrying once when it is busy. */
-async function askModel(key: string, model: string, rows: ReturnType<typeof maskRow>[], retryDelay: number) {
+async function askModel<T>(key: string, model: string, prompt: string, schema: object, retryDelay: number): Promise<T> {
   try {
-    return await callGemini(key, model, rows);
+    return await callGemini<T>(key, model, prompt, schema);
   } catch (e) {
     if (!(e instanceof ModelUnavailable) || e.status < 500) throw e;
     await wait(retryDelay);
-    return callGemini(key, model, rows);
+    return callGemini<T>(key, model, prompt, schema);
   }
 }
 
@@ -148,42 +155,63 @@ async function discoveredModels(key: string, tried: string[]): Promise<string[]>
     .slice(0, 3);
 }
 
-export async function checkWithGemini(txns: Txn[], settings: Settings, onProgress?: (done: number, total: number) => void, retryDelay = 2000): Promise<AiSuggestion[]> {
-  if (!settings.geminiKey) throw new Error('Add your free Gemini API key in Settings first.');
-  const key = settings.geminiKey;
-  let models = [...GEMINI_MODELS];
-  let discovered = false;
-  const out: AiSuggestion[] = [];
-  const BATCH = 60;
-  for (let s = 0; s < txns.length; s += BATCH) {
-    onProgress?.(s, txns.length);
-    const batch = txns.slice(s, s + BATCH);
-    const masked = batch.map((t) => maskRow(t, settings.ownNames));
-    let rows;
+/**
+ * Sends prompts to the best Gemini model that is working. One session keeps
+ * using whichever model answered, and moves on to the next when a model is
+ * busy, retired or out of free quota.
+ */
+export class GeminiSession {
+  private models = [...GEMINI_MODELS];
+  private discovered = false;
+  constructor(private key: string, private retryDelay = 2000) {}
+
+  async generate<T>(prompt: string, schema: object): Promise<T> {
     let lastError: unknown;
-    for (let m = 0; m < models.length && !rows; m++) {
-      const model = models[m];
+    for (let m = 0; m < this.models.length; m++) {
+      const model = this.models[m];
       try {
-        rows = await askModel(key, model, masked, retryDelay);
-        // Keep using the model that answered for the remaining batches.
-        models = [model, ...models.filter((x) => x !== model)];
+        const out = await askModel<T>(this.key, model, prompt, schema, this.retryDelay);
+        this.models = [model, ...this.models.filter((x) => x !== model)];
+        return out;
       } catch (e) {
         if (!(e instanceof ModelUnavailable)) throw e;
         lastError = e;
         // Every known model is gone: look up what this key can use.
-        if (m === models.length - 1 && !discovered && e.status === 404) {
-          discovered = true;
-          models.push(...await discoveredModels(key, models));
+        if (m === this.models.length - 1 && !this.discovered && e.status === 404) {
+          this.discovered = true;
+          this.models.push(...await discoveredModels(this.key, this.models));
         }
       }
     }
-    if (!rows) throw lastError;
-    for (const r of rows) {
-      const t = batch[r.i];
-      if (!t || !KINDS.includes(r.kind) || !isValidCategory(r.kind, r.category)) continue;
-      out.push({ id: t.id, payee: (r.payee || t.merchantName).slice(0, 40), kind: r.kind, category: r.category, mixed: Boolean(r.mixed), note: r.note ?? '' });
+    throw lastError;
+  }
+}
+
+export type RowSuggestion = Omit<AiSuggestion, 'id'>;
+
+/** Payee, type and category for each row, looking at one row's own text at a time. */
+export async function suggestForRows(
+  rows: RowLike[], ownNames: string[], session: GeminiSession, onProgress?: (done: number, total: number) => void,
+): Promise<(RowSuggestion | undefined)[]> {
+  const out: (RowSuggestion | undefined)[] = rows.map(() => undefined);
+  const BATCH = 60;
+  for (let s = 0; s < rows.length; s += BATCH) {
+    onProgress?.(s, rows.length);
+    const batch = rows.slice(s, s + BATCH);
+    const masked = batch.map((t) => maskRow(t, ownNames));
+    const answer = await session.generate<{ rows: { i: number; payee: string; kind: Kind; category: string; mixed: boolean; note: string }[] }>(
+      `${PROMPT}\n\nRows:\n${JSON.stringify(masked.map((r, i) => ({ i, ...r })))}`, SCHEMA);
+    for (const r of answer.rows) {
+      if (!batch[r.i] || !AI_KINDS.includes(r.kind) || !isValidCategory(r.kind, r.category)) continue;
+      out[s + r.i] = { payee: (r.payee ?? '').trim().slice(0, 40), kind: r.kind, category: r.category, mixed: Boolean(r.mixed), note: r.note ?? '' };
     }
   }
-  onProgress?.(txns.length, txns.length);
+  onProgress?.(rows.length, rows.length);
   return out;
+}
+
+export async function checkWithGemini(txns: Txn[], settings: Settings, onProgress?: (done: number, total: number) => void, retryDelay = 2000): Promise<AiSuggestion[]> {
+  if (!settings.geminiKey) throw new Error('Add your free Gemini API key in Settings first.');
+  const found = await suggestForRows(txns, settings.ownNames, new GeminiSession(settings.geminiKey, retryDelay), onProgress);
+  return found.flatMap((s, i) => (s ? [{ ...s, id: txns[i].id, payee: s.payee || txns[i].merchantName }] : []));
 }

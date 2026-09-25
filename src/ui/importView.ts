@@ -1,6 +1,6 @@
 import type { Kind } from '../types';
 import { defaultCategory, KIND_LABEL } from '../categorize/categories';
-import { applyRescan, buildPreview, commitPreview, deleteImport, diffRescan, parseFile, parseThorough, recategorizeAll, type ImportPreview } from '../importer';
+import { applyRescan, buildPreview, commitPreview, deleteImport, diffRescan, parseFile, readStatement, recategorizeAll, type ImportPreview, type ReadProgress } from '../importer';
 import { PasswordNeededError } from '../parse/errors';
 import { deleteFile, loadFile, requestPersistence, saveFile, type StoredFile } from '../store';
 import { app, askConfirm, navigate, render, toast, update } from './app';
@@ -11,8 +11,23 @@ interface Pending { file: File; preview?: ImportPreview; error?: string; needsPa
 
 let pending: Pending[] = [];
 let busy = false;
+/** What the reader is doing right now, for the "Reading…" note. */
+let readingNote = '';
+
+function progressText(p: ReadProgress): string {
+  if (p.stage === 'local') return 'Reading the statement on this device…';
+  if (p.stage === 'ai-read') return `The balance didn't add up, so the AI is reading the table${p.total > 1 ? ` (part ${Math.min(p.done + 1, p.total)} of ${p.total})` : ''}… usually 10–60 seconds.`;
+  return `AI is cleaning up titles and categories (${p.done} of ${p.total} rows)… usually 10–40 seconds.`;
+}
+
+/** The note shown on a statement: which reader read it. */
+function readerPill(r: { reader?: 'ai' | 'local'; aiTitles?: boolean }): string {
+  const read = r.reader === 'ai' ? '<span class="pill" title="Rows read by Gemini, checked against the running balance">Rows read by AI</span>' : '';
+  const titles = r.aiTitles ? '<span class="pill ok" title="Titles and categories cleaned up by Gemini">AI titles</span>' : '';
+  return read + titles;
+}
 /** A rescan or AI check that is running, shown on its statement until it finishes. */
-let working: { id: string; what: 'rescan' | 'ai'; done: number; total: number } | null = null;
+let working: { id: string; what: 'rescan' | 'ai'; done: number; total: number; note?: string } | null = null;
 
 function setWorking(w: typeof working) {
   working = w;
@@ -21,7 +36,7 @@ function setWorking(w: typeof working) {
 
 async function processFile(p: Pending, password?: string) {
   try {
-    const result = await parseFile(p.file, password);
+    const result = await parseFile(p.file, password, app.state.settings, (pr) => { readingNote = progressText(pr); render(); });
     p.needsPassword = false;
     if (!result.txns.length) {
       p.error = result.warnings[0] ?? 'No transactions found.';
@@ -51,7 +66,9 @@ function previewCard(p: Pending, i: number): string {
     return `<div class="card"><h2 class="ellipsis">${esc(p.file.name)}</h2><p class="bad small">${esc(p.error)}</p>
       <button class="btn" data-remove="${i}">Remove</button></div>`;
   }
-  const pv = p.preview!;
+  // Still being read: the progress note above covers it.
+  const pv = p.preview;
+  if (!pv) return '';
   const { result, account, fresh } = pv;
   const dates = result.txns.map((t) => t.date).sort();
   const debits = result.txns.filter((t) => t.direction === 'debit').reduce((a, t) => a + t.amount, 0);
@@ -71,8 +88,10 @@ function previewCard(p: Pending, i: number): string {
       <tr><td>Balance check</td><td>${!hasBalance ? '<span class="muted">No balance column</span>'
         : result.balanceMismatches === 0 ? '<span class="ok">✓ Every row adds up</span>'
         : `<span class="bad">${result.balanceMismatches} row(s) don't add up — check them</span>`}</td></tr>
+      <tr><td>Read by</td><td>${result.reader === 'ai' ? 'AI (Gemini), checked against the balance' : 'This device'}${result.aiTitles ? ' · <span class="ok">titles by AI</span>' : ''}</td></tr>
       <tr><td>New</td><td class="num">${fresh.length}${pv.duplicates ? ` <span class="muted">(${pv.duplicates} already imported)</span>` : ''}</td></tr>
     </table>
+    ${result.warnings.filter((w) => /AI/.test(w)).map((w) => `<p class="tiny" style="margin:6px 0 0">${esc(w)}</p>`).join('')}
     ${fresh.length ? `<div class="chips" style="margin-top:10px;flex-wrap:wrap">
       ${[...counts.entries()].map(([k, n]) => `<span class="chip"><span class="dot" style="background:${kindVar(k)}"></span> ${esc(KIND_LABEL[k])} ${n}</span>`).join('')}
       ${review ? `<span class="chip">Needs review ${review}</span>` : ''}
@@ -128,7 +147,9 @@ async function rescan(importId: string) {
   for (;;) {
     try {
       setWorking({ id: importId, what: 'rescan', done: 0, total: 0 });
-      result = await parseThorough(file.data, file.name, file.type, password);
+      result = await readStatement(file.data, file.name, file.type, password, app.state.settings, (pr) => {
+        if (working?.id === importId) setWorking({ id: importId, what: 'rescan', done: pr.done, total: pr.total, note: progressText(pr) });
+      });
       break;
     } catch (e) {
       setWorking(null);
@@ -150,8 +171,8 @@ async function rescan(importId: string) {
     await update((s) => ({ ...s, imports: s.imports.map((i) => (i.id === importId ? { ...i, hasFile: true } : i)) }));
   }
   const balance = result.balanceMismatches === 0 ? 'The running balance adds up on every row.' : `${result.balanceMismatches} row(s) still don't add up to the running balance; check them against the PDF.`;
-  const nMiss = diff.missing.length, nFix = diff.corrected.length;
-  if (!nMiss && !nFix) {
+  const nMiss = diff.missing.length, nTitle = diff.retitled, nFix = diff.corrected.length - nTitle;
+  if (!nMiss && !nFix && !nTitle) {
     await update((s) => applyRescan(s, importId, diff));
     toast(`Nothing to fix: all ${result.txns.length} rows match. ${balance}`);
     return;
@@ -159,11 +180,12 @@ async function rescan(importId: string) {
   const parts = [
     nMiss ? `${nMiss} missed row${nMiss > 1 ? 's' : ''} to add` : '',
     nFix ? `${nFix} row${nFix > 1 ? 's' : ''} with a corrected description (payee and category will be re-checked; types you set by hand stay)` : '',
+    nTitle ? `${nTitle} row${nTitle > 1 ? 's' : ''} with a better AI title or category (titles and types you set by hand stay)` : '',
   ].filter(Boolean);
   const ok = await askConfirm(`Rescan found ${parts.join(' and ')}. ${balance} Apply?`, 'Apply fixes', false);
   if (!ok) return;
   await update((s) => applyRescan(s, importId, diff));
-  toast([nMiss ? `Added ${nMiss}` : '', nFix ? `corrected ${nFix}` : ''].filter(Boolean).join(', '));
+  toast([nMiss ? `Added ${nMiss}` : '', nFix ? `corrected ${nFix}` : '', nTitle ? `retitled ${nTitle}` : ''].filter(Boolean).join(', '));
 }
 
 async function aiCheck(importId: string) {
@@ -189,7 +211,7 @@ async function aiCheck(importId: string) {
 
 function progressNote(w: NonNullable<typeof working>): string {
   if (w.what === 'rescan') {
-    return `<div class="work-note" role="status"><span class="spinner"></span><div class="grow">Reading the file again with several settings…</div></div>`;
+    return `<div class="work-note" role="status"><span class="spinner"></span><div class="grow">${esc(w.note ?? 'Reading the file again…')}</div></div>`;
   }
   // Show a little progress before the first batch comes back, so the bar never looks stuck at zero.
   const pct = w.total ? Math.max(8, Math.round((w.done / w.total) * 100)) : 8;
@@ -215,7 +237,7 @@ function uploadedList(): string {
           <div class="name ellipsis">${esc(r.fileName)}</div>
           <div class="meta">${esc(acc ? `${acc.bank} ••${acc.number.slice(-4)}` : r.accountId)} · ${esc(r.from)} to ${esc(r.to)} · ${n} rows</div>
           <div class="meta">Uploaded ${esc(dayLabel(new Date(r.importedAt).toISOString().slice(0, 10)))}${r.rescannedAt ? ` · rescanned ${esc(dayLabel(new Date(r.rescannedAt).toISOString().slice(0, 10)))}` : ''}</div>
-          ${check ? `<div style="margin-top:6px">${check}</div>` : ''}
+          ${check || readerPill(r) ? `<div class="row wrap" style="margin-top:6px;gap:6px">${check}${readerPill(r)}</div>` : ''}
         </div>
         <div class="upload-actions">
           <button class="btn small-btn" data-rescan="${esc(r.id)}" ${working ? 'disabled' : ''}>${working?.id === r.id && working.what === 'rescan' ? '<span class="spinner"></span>Rescanning' : 'Rescan'}</button>
@@ -237,7 +259,7 @@ export function renderImport(root: HTMLElement) {
       <div class="small muted">PDF, Excel (.xls/.xlsx) or CSV · several at once is fine</div>
     </label>
     <p class="tiny" style="margin:8px 4px 14px">Files are read on this device and never uploaded anywhere.</p>
-    ${busy ? '<div class="card small muted">Reading…</div>' : ''}
+    ${busy ? `<div class="work-note" role="status" style="margin:0 0 12px"><span class="spinner"></span><div class="grow">${esc(readingNote || 'Reading…')}</div></div>` : ''}
     ${pending.map(previewCard).join('')}
     ${ready.length ? `<button class="btn primary block" id="save">Save ${ready.reduce((a, p) => a + p.preview!.fresh.length, 0)} transactions</button>` : ''}
     ${pending.length && !ready.length && !busy && pending.every((p) => p.preview) ? '<p class="muted small">Nothing new to save.</p>' : ''}

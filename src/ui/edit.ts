@@ -17,6 +17,7 @@ const SOURCE_LABEL: Record<Txn['source'], string> = {
 export function openEditSheet(t: Txn) {
   let kind: Kind = t.kind;
   let category = t.category;
+  let title = t.merchantName;
   const similarFor = (k: Kind) => app.state.txns.filter((x) => x.merchantKey === t.merchantKey && x.id !== t.id &&
     (k === 'spend' || k === 'income' ? x.direction === t.direction : true));
   const account = app.state.accounts.find((a) => a.id === t.accountId);
@@ -39,6 +40,8 @@ export function openEditSheet(t: Txn) {
       <div class="small muted">${esc(dayLabel(t.date))} · ${esc(account ? `${account.bank} ••${account.number.slice(-4)}` : t.accountId)} · ${esc(detectMethod(t.description.toUpperCase()))}</div>
       <div class="desc-box">${esc(t.description)}</div>
 
+      <label class="field"><span>Title</span><input type="text" id="title" value="${esc(title)}" maxlength="40" placeholder="${esc(t.merchantName)}"></label>
+
       <label class="field"><span>Type</span></label>
       <div class="seg" style="margin:-6px 0 12px">
         ${(Object.keys(CATEGORIES) as Kind[]).filter((k) => k !== 'ignore').map((k) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${esc(KIND_LABEL[k])}</button>`).join('')}
@@ -48,7 +51,7 @@ export function openEditSheet(t: Txn) {
       </label>
       <label class="row small" style="margin-bottom:12px;align-items:flex-start">
         <input type="checkbox" id="remember" checked style="margin-top:3px">
-        <span>Always use this for <strong>${esc(t.merchantName)}</strong>${similar.length ? ` and update ${similar.length} other transaction${similar.length > 1 ? 's' : ''}` : ''}</span>
+        <span>Always use this type, category and title for <strong>${esc(t.merchantName)}</strong>${similar.length ? ` and update ${similar.length} other transaction${similar.length > 1 ? 's' : ''}` : ''}</span>
       </label>
       <label class="row small" style="margin-bottom:12px"><input type="checkbox" id="counted" ${t.excluded ? '' : 'checked'}><span>Counted in totals</span></label>
       <label class="field"><span>Note</span><input type="text" id="note" value="${esc(t.note ?? '')}" placeholder="Optional"></label>
@@ -58,6 +61,9 @@ export function openEditSheet(t: Txn) {
         <button class="btn primary grow" id="save">Save</button>
       </div>
     </div>`;
+    backdrop.querySelector<HTMLInputElement>('#title')!.addEventListener('input', (e) => {
+      title = (e.target as HTMLInputElement).value;
+    });
     backdrop.querySelectorAll<HTMLElement>('[data-k]').forEach((b) => b.addEventListener('click', () => {
       kind = b.dataset.k as Kind;
       draw();
@@ -70,17 +76,23 @@ export function openEditSheet(t: Txn) {
       const remember = backdrop.querySelector<HTMLInputElement>('#remember')!.checked;
       const note = backdrop.querySelector<HTMLInputElement>('#note')!.value.trim() || undefined;
       const excluded = !backdrop.querySelector<HTMLInputElement>('#counted')!.checked;
+      const newTitle = title.trim().slice(0, 40) || t.merchantName;
+      const renamed = newTitle !== t.merchantName;
       close();
       await update((s) => {
         const direction = kind === 'spend' || kind === 'income' ? t.direction : undefined;
         const sameRule = (r: { key: string; direction?: string }) => r.key === t.merchantKey && (!direction || !r.direction || r.direction === direction);
+        const oldRule = s.rules.find(sameRule);
+        const ruleTitle = renamed ? newTitle : oldRule?.title;
         const rules = remember
-          ? [...s.rules.filter((r) => !sameRule(r)), { key: t.merchantKey, kind, category, direction, createdAt: Date.now() }]
+          ? [...s.rules.filter((r) => !sameRule(r)), { key: t.merchantKey, kind, category, direction, createdAt: Date.now(), ...(ruleTitle ? { title: ruleTitle } : {}) }]
           : s.rules;
+        const titled = renamed ? { merchantName: newTitle, titleSet: 'manual' as const } : {};
         const txns = s.txns.map((x) => {
-          if (x.id === t.id) return { ...x, kind, category, source: 'manual' as const, note, excluded };
-          if (remember && x.merchantKey === t.merchantKey && (!direction || x.direction === direction) && x.source !== 'manual') {
-            return { ...x, kind, category, source: 'learned' as const };
+          if (x.id === t.id) return { ...x, ...titled, kind, category, source: 'manual' as const, note, excluded };
+          if (remember && x.merchantKey === t.merchantKey && (!direction || x.direction === direction)) {
+            // Types you set by hand on other rows stay; the new title applies to all of them.
+            return x.source === 'manual' ? { ...x, ...titled } : { ...x, ...titled, kind, category, source: 'learned' as const };
           }
           return x;
         });

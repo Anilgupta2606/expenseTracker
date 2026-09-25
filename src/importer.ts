@@ -1,6 +1,7 @@
-import type { Account, AppState, ParseResult, StatementImport, Txn } from './types';
+import type { Account, AppState, ParsedTxn, ParseResult, StatementImport, Txn } from './types';
 import { categorize, extractMerchant, pairTransfers, type Context } from './categorize/engine';
 import { hash } from './parse/util';
+import { isValidCategory } from './categorize/categories';
 
 export interface ImportPreview {
   result: ParseResult;
@@ -13,8 +14,8 @@ export interface ImportPreview {
   record: StatementImport;
 }
 
-export async function parseFile(file: File, password?: string): Promise<ParseResult> {
-  return parseThorough(await file.arrayBuffer(), file.name, file.type, password);
+export async function parseFile(file: File, password?: string, settings?: AppState['settings'], onProgress?: (p: ReadProgress) => void): Promise<ParseResult> {
+  return readStatement(await file.arrayBuffer(), file.name, file.type, password, settings, onProgress);
 }
 
 export function accountFor(result: ParseResult, state: AppState, fileName: string): { account: Account; isNew: boolean } {
@@ -39,6 +40,29 @@ export function contextFor(state: AppState, extraAccount?: Account): Context {
   return { settings: state.settings, accounts, rules: state.rules };
 }
 
+type Classified = Pick<Txn, 'kind' | 'category' | 'source' | 'excluded' | 'merchantKey' | 'merchantName' | 'titleSet'>;
+
+/**
+ * Type, category and title for a statement row. Your learned rules, your own
+ * transfers and the sure rules (salary, investments, card bills) win; the AI
+ * reader's payee becomes the title, and its category beats the app's guesses
+ * and merchant-name matches.
+ */
+export function classify(p: ParsedTxn, ctx: Context, accountId: string): Classified {
+  const merchant = extractMerchant(p.description);
+  const c = categorize(p, merchant, ctx, accountId);
+  const out: Classified = {
+    kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
+    merchantKey: merchant.key, merchantName: merchant.name,
+  };
+  const hint = p.hint && isValidCategory(p.hint.kind, p.hint.category) ? p.hint : undefined;
+  // "SELF" is how your own name reaches the AI; placeholders like "Unknown" aren't titles.
+  if (hint?.payee.trim() && !/^(self|unknown|uncategori[sz]ed|n\/?a|none|-)$/i.test(hint.payee.trim())) { out.merchantName = hint.payee.trim().slice(0, 40); out.titleSet = 'ai'; }
+  if (hint && (c.source === 'default' || c.weak)) { out.kind = hint.kind; out.category = hint.category; out.source = 'ai'; }
+  if (c.title) { out.merchantName = c.title; out.titleSet = 'manual'; }
+  return out;
+}
+
 export function buildPreview(result: ParseResult, state: AppState, fileName: string): ImportPreview {
   const { account, isNew } = accountFor(result, state, fileName);
   const ctx = contextFor(state, account);
@@ -50,15 +74,8 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   let duplicates = 0;
   result.txns.forEach((p, i) => {
     if (matches[i]) { duplicates++; return; }
-    const merchant = extractMerchant(p.description);
-    const c = categorize(p, merchant, ctx, account.id);
-    fresh.push({
-      ...p, id: ids[i], accountId: account.id,
-      kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
-      merchantKey: merchant.key, merchantName: merchant.name,
-      importedAt: now,
-      importId,
-    });
+    const { hint: _h, ...row } = p;
+    fresh.push({ ...row, ...classify(p, ctx, account.id), id: ids[i], accountId: account.id, importedAt: now, importId });
   });
   // Pair within this statement and against earlier imports (on copies, until committed).
   const earlier = state.txns.map((t) => ({ ...t }));
@@ -67,7 +84,7 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   const dates = fresh.map((t) => t.date).sort();
   const record: StatementImport = {
     id: importId, fileName, accountId: account.id, from: dates[0] ?? '', to: dates[dates.length - 1] ?? '', importedAt: now,
-    rows: result.txns.length, balanceMismatches: result.balanceMismatches,
+    rows: result.txns.length, balanceMismatches: result.balanceMismatches, reader: result.reader, aiTitles: result.aiTitles,
   };
   return { result, account, isNewAccount: isNew, fresh, duplicates, updated, record };
 }
@@ -94,9 +111,13 @@ export function recategorizeAll(state: AppState): AppState {
   const ctx = contextFor(state);
   const txns = state.txns.map((t) => {
     if (t.source === 'manual' || t.source === 'ai') return t;
-    const merchant = extractMerchant(t.description);
-    const c = categorize(t, merchant, ctx, t.accountId);
-    return { ...t, kind: c.kind, category: c.category, source: c.source, excluded: c.source === 'learned' ? c.excluded : t.excluded, pairId: undefined, merchantKey: merchant.key, merchantName: merchant.name };
+    const c = classify({ ...t, hint: undefined }, ctx, t.accountId);
+    // A title you typed stays; one from a learned rule beats the AI's.
+    const own = t.titleSet === 'manual' || (t.titleSet === 'ai' && c.titleSet !== 'manual');
+    return {
+      ...t, kind: c.kind, category: c.category, source: c.source, excluded: c.source === 'learned' ? c.excluded : t.excluded, pairId: undefined,
+      merchantKey: c.merchantKey, merchantName: own ? t.merchantName : c.merchantName, titleSet: own ? t.titleSet : c.titleSet,
+    };
   });
   pairTransfers(txns);
   return { ...state, txns };
@@ -111,13 +132,36 @@ function better(a: ParseResult, b: ParseResult): boolean {
 }
 
 /**
- * Reads a statement again, trying several line-grouping settings, and keeps
- * the reading whose running balance holds best.
+ * Reads a statement with the on-device reader, trying several line-grouping
+ * settings, and keeps the reading whose running balance holds best.
  */
 export async function parseThorough(data: ArrayBuffer, fileName: string, type: string, password?: string): Promise<ParseResult> {
-  if (/\.pdf$/i.test(fileName) || type === 'application/pdf') {
+  return readStatement(data, fileName, type, password);
+}
+
+const isPdf = (fileName: string, type: string) => /\.pdf$/i.test(fileName) || type === 'application/pdf';
+
+export interface ReadProgress { stage: 'local' | 'ai-read' | 'ai-titles'; done: number; total: number }
+
+/**
+ * Reads a statement. The on-device reader reads the rows; with a Gemini key,
+ * the AI reads the table instead when the running balance doesn't add up
+ * (only the table, with numbers and names masked), and then the AI cleans up
+ * every row's title and category from that row's own text.
+ */
+export async function readStatement(
+  data: ArrayBuffer, fileName: string, type: string, password?: string,
+  settings?: AppState['settings'], onProgress?: (p: ReadProgress) => void,
+): Promise<ParseResult> {
+  let result: ParseResult;
+  let items: Awaited<ReturnType<typeof import('./parse/pdf')['readPdfItems']>> | null = null;
+  if (!isPdf(fileName, type)) {
+    const { readSheet } = await import('./parse/sheet');
+    result = { ...(await readSheet(data.slice(0))), reader: 'local' };
+  } else {
     const [{ readPdfItems }, { groupLines, parseLayout }] = await Promise.all([import('./parse/pdf'), import('./parse/layout')]);
-    const items = await readPdfItems(data.slice(0), password);
+    onProgress?.({ stage: 'local', done: 0, total: 1 });
+    items = await readPdfItems(data.slice(0), password);
     let best: ParseResult | null = null;
     for (const tolerance of [2, 1, 3, 4]) {
       const pages = items.map((p) => groupLines(p, tolerance));
@@ -126,17 +170,50 @@ export async function parseThorough(data: ArrayBuffer, fileName: string, type: s
         if (!best || better(r, best)) best = r;
       }
     }
-    return best!;
+    result = { ...best!, reader: 'local' };
   }
-  const { readSheet } = await import('./parse/sheet');
-  return readSheet(data.slice(0));
+  if (!settings?.geminiKey) return result;
+
+  const [{ scanWithGemini, pickReading }, { GeminiSession, suggestForRows }, { groupLines }] = await Promise.all([
+    import('./parse/aiScan'), import('./categorize/gemini'), import('./parse/layout'),
+  ]);
+  if (items && (result.balanceMismatches > 0 || !result.txns.length)) {
+    try {
+      const ai = await scanWithGemini(items.map((p) => groupLines(p)), settings, result.meta.holderName,
+        (done, total) => onProgress?.({ stage: 'ai-read', done, total }));
+      result = pickReading(result, ai);
+    } catch (e) {
+      result = pickReading(result, null, (e as Error).message);
+    }
+  }
+  if (!result.txns.length) return result;
+  try {
+    const session = new GeminiSession(settings.geminiKey);
+    const found = await suggestForRows(result.txns, [...settings.ownNames, ...(result.meta.holderName ? [result.meta.holderName] : [])], session,
+      (done, total) => onProgress?.({ stage: 'ai-titles', done, total }));
+    const mixed = found.filter((s) => s?.mixed).length;
+    result = {
+      ...result,
+      aiTitles: true,
+      txns: result.txns.map((t, i) => {
+        const s = found[i];
+        return s ? { ...t, hint: { payee: s.payee, kind: s.kind, category: s.category } } : t;
+      }),
+      warnings: mixed ? [...result.warnings, `The AI thinks ${mixed} row${mixed > 1 ? 's' : ''} may carry text from another row; check them against the PDF.`] : result.warnings,
+    };
+  } catch (e) {
+    result = { ...result, warnings: [...result.warnings, `AI titles skipped (${(e as Error).message}). You can run AI check later.`] };
+  }
+  return result;
 }
 
 export interface RescanResult {
   result: ParseResult;
   missing: Txn[];
   /** Rows already in the app whose description the new reading corrects. */
-  corrected: { id: string; description: string }[];
+  corrected: { id: string; description: string; hint?: ParsedTxn['hint'] }[];
+  /** Rows read the same whose title or category the AI would improve. */
+  retitled: number;
   /** Rows already in the app that the new reading also found. */
   matched: number;
 }
@@ -186,44 +263,50 @@ function matchRows(state: AppState, accountId: string, rows: ParseResult['txns']
 /** Rows a new reading of a statement found that the app doesn't have yet, and rows it reads differently. */
 export function diffRescan(state: AppState, importId: string, result: ParseResult): RescanResult {
   const rec = state.imports.find((i) => i.id === importId);
-  if (!rec) return { result, missing: [], corrected: [], matched: 0 };
+  if (!rec) return { result, missing: [], corrected: [], retitled: 0, matched: 0 };
   const account = state.accounts.find((a) => a.id === rec.accountId) ?? { id: rec.accountId, bank: result.meta.bank, number: rec.accountId };
   const ctx = contextFor(state, account);
   const { ids, matches } = matchRows(state, account.id, result.txns);
   const missing: Txn[] = [];
-  const corrected: { id: string; description: string }[] = [];
-  let matched = 0;
+  const corrected: RescanResult['corrected'] = [];
+  let matched = 0, retitled = 0;
   result.txns.forEach((p, i) => {
     const same = matches[i];
     if (same) {
       matched++;
-      if (same.description !== p.description) corrected.push({ id: same.id, description: p.description });
+      if (same.description !== p.description) {
+        corrected.push({ id: same.id, description: p.description, hint: p.hint });
+      } else if (p.hint) {
+        const c = classify(p, ctx, account.id);
+        const newTitle = same.titleSet !== 'manual' && c.merchantName !== same.merchantName;
+        const newType = same.source !== 'manual' && same.source !== 'learned' && (c.kind !== same.kind || c.category !== same.category);
+        if (newTitle || newType) { corrected.push({ id: same.id, description: p.description, hint: p.hint }); retitled++; }
+      }
       return;
     }
-    const merchant = extractMerchant(p.description);
-    const c = categorize(p, merchant, ctx, account.id);
-    missing.push({
-      ...p, id: ids[i], accountId: account.id, importId: rec.id, importedAt: Date.now(),
-      kind: c.kind, category: c.category, source: c.source, excluded: c.excluded,
-      merchantKey: merchant.key, merchantName: merchant.name,
-    });
+    const { hint: _h, ...row } = p;
+    missing.push({ ...row, ...classify(p, ctx, account.id), id: ids[i], accountId: account.id, importId: rec.id, importedAt: Date.now() });
   });
-  return { result, missing, corrected, matched };
+  return { result, missing, corrected, retitled, matched };
 }
 
 export function applyRescan(state: AppState, importId: string, rescan: RescanResult): AppState {
   const dates = [...state.txns.filter((t) => t.importId === importId), ...rescan.missing].map((t) => t.date).sort();
   const imports = state.imports.map((i) => (i.id === importId ? {
-    ...i, rows: rescan.result.txns.length, balanceMismatches: rescan.result.balanceMismatches,
+    ...i, rows: rescan.result.txns.length, balanceMismatches: rescan.result.balanceMismatches, reader: rescan.result.reader, aiTitles: rescan.result.aiTitles || i.aiTitles,
     from: dates[0] ?? i.from, to: dates[dates.length - 1] ?? i.to, rescannedAt: Date.now(),
   } : i));
-  // Corrected descriptions get a fresh payee and category, unless you set the type yourself.
-  const fixes = new Map(rescan.corrected.map((c) => [c.id, c.description]));
+  // Corrected descriptions get a fresh payee and category, unless you set the type or title yourself.
+  const ctx = contextFor(state);
+  const fixes = new Map(rescan.corrected.map((c) => [c.id, c]));
   const updated = state.txns.map((t) => {
-    const description = fixes.get(t.id);
-    if (description == null) return t;
-    const merchant = extractMerchant(description);
-    return { ...t, description, merchantKey: merchant.key, merchantName: merchant.name, source: t.source === 'ai' ? 'default' as const : t.source };
+    const fix = fixes.get(t.id);
+    if (!fix) return t;
+    const c = classify({ ...t, description: fix.description, hint: fix.hint }, ctx, t.accountId);
+    const next = { ...t, description: fix.description, merchantKey: c.merchantKey };
+    if (t.titleSet !== 'manual') { next.merchantName = c.merchantName; next.titleSet = c.titleSet; }
+    if (t.source !== 'manual') { next.kind = c.kind; next.category = c.category; next.source = c.source; }
+    return next;
   });
   const txns = [...updated, ...rescan.missing].sort((a, b) => b.date.localeCompare(a.date));
   // An older reader could name the wrong bank; the new reading fixes the label.
