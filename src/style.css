@@ -416,3 +416,9 @@ table.simple a { color: inherit; }
 body.dropping::after { content: 'Drop statements to read them'; position: fixed; inset: 12px; z-index: 300; display: grid; place-items: center;
   border: 3px dashed var(--accent); border-radius: 18px; background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
   color: var(--accent); font-size: 20px; font-weight: 650; pointer-events: none; }
+
+/* Month in review, recurring payments, unpaired transfers */
+.movements li.mv-row { display: flex; align-items: center; gap: 8px; padding: 9px 0; }
+.movements .rec-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.badge.ok-badge { background: var(--ok-bg); color: var(--ok); }
+.pair-card { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; display: grid; gap: 3px; }
