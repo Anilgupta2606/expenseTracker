@@ -98,14 +98,19 @@ export interface LayoutOptions {
   preLine?: number;
 }
 
+/** The issuing bank, read from the header above the transactions table (page 1). */
+export function statementBank(pages: Page[]): string {
+  const joined = pages.flat().map(lineText).join('\n');
+  const first = (pages[0] ?? []).map(lineText);
+  const tableAt = first.findIndex((l) => /\bbalance\b/i.test(l) && /withdrawal|debit|deposit|credit/i.test(l));
+  return detectBank(joined, first.slice(0, tableAt >= 0 ? tableAt : 20).join('\n'));
+}
+
 export function parseLayout(pages: Page[], opts: LayoutOptions = {}): ParseResult {
   const preLine = opts.preLine ?? 0.75;
   const allText = pages.flat().map(lineText);
   const joined = allText.join('\n');
-  // The header is page 1 above the table (the first line that names a balance column).
-  const first = (pages[0] ?? []).map(lineText);
-  const tableAt = first.findIndex((l) => /\bbalance\b/i.test(l) && /withdrawal|debit|deposit|credit/i.test(l));
-  const bank = detectBank(joined, first.slice(0, tableAt >= 0 ? tableAt : 20).join('\n'));
+  const bank = statementBank(pages);
   const warnings: string[] = [];
 
   let holderName = detectHolderName(allText);

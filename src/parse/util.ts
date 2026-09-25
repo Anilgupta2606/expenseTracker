@@ -66,9 +66,6 @@ const BANKS: [string, RegExp, string][] = [
   ['Federal', /FEDERAL BANK/, 'FDRL'],
 ];
 
-/** Bank names the app knows, for fixing an account's bank by hand. */
-export const BANK_NAMES = BANKS.map(([name]) => name);
-
 /**
  * Which bank issued the statement. The header (everything above the
  * transactions table) decides: first its IFSC code, then the first bank it

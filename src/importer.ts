@@ -23,9 +23,11 @@ export function accountFor(result: ParseResult, state: AppState, fileName: strin
   const digits = (accountNumber ?? '').replace(/\D/g, '');
   const last4 = digits.slice(-4) || hash(fileName).slice(0, 4);
   const id = `${bank}-${last4}`;
-  const existing = state.accounts.find((a) => a.id === id);
+  // The same account number is the same account, even if an older upload named the bank differently.
+  const existing = state.accounts.find((a) => a.id === id)
+    ?? (digits.length >= 8 ? state.accounts.find((a) => a.number.replace(/\D/g, '') === digits) : undefined);
   if (existing) return { account: existing, isNew: false };
-  return { account: { id, bank, number: accountNumber ?? last4, holderName }, isNew: true };
+  return { account: { id, bank, number: accountNumber ?? last4, holderName, bankChecked: true }, isNew: true };
 }
 
 export function txnId(accountId: string, t: { date: string; amount: number; direction: string; balance?: number; description: string }, seq: number): string {
@@ -99,6 +101,16 @@ export function commitPreview(state: AppState, preview: ImportPreview): AppState
   const txns = [...state.txns.map((t) => changed.get(t.id) ?? t), ...preview.fresh].sort((a, b) => b.date.localeCompare(a.date));
   const imports = preview.fresh.length ? [...state.imports, preview.record] : state.imports;
   return { ...state, accounts, txns, imports };
+}
+
+/** Reads only which bank issued a stored statement file. */
+export async function bankOfFile(data: ArrayBuffer, fileName: string, type: string): Promise<string> {
+  if (!isPdf(fileName, type)) {
+    const { readSheet } = await import('./parse/sheet');
+    return (await readSheet(data.slice(0))).meta.bank;
+  }
+  const [{ readPdfItems }, { groupLines, statementBank }] = await Promise.all([import('./parse/pdf'), import('./parse/layout')]);
+  return statementBank((await readPdfItems(data.slice(0))).map((p) => groupLines(p)));
 }
 
 /** Rows just paired as self transfers follow the Self Transfer Counted setting. */
@@ -328,7 +340,7 @@ export function applyRescan(state: AppState, importId: string, rescan: RescanRes
   const rec = state.imports.find((i) => i.id === importId);
   const bank = rescan.result.meta.bank;
   const accounts = bank && bank !== 'Unknown'
-    ? state.accounts.map((a) => (a.id === rec?.accountId && !a.bankSetByHand ? { ...a, bank } : a))
+    ? state.accounts.map((a) => (a.id === rec?.accountId ? { ...a, bank } : a))
     : state.accounts;
   return recategorizeAll({ ...state, accounts, imports, txns });
 }
