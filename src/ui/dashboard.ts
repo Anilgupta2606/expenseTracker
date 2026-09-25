@@ -223,7 +223,8 @@ export function renderDashboard(root: HTMLElement) {
   const newer = months[idx - 1];
   const older = months[idx + 1];
 
-  const scoped = applyFilters(state.txns, { ...filters, month: 'all' }, { kind: false });
+  // The Overview follows only the account picker; search and type chips belong to the Transactions list.
+  const scoped = applyFilters(state.txns, { ...filters, month: 'all', search: '' }, { kind: false });
   const allMonths = [...months].reverse();
   const inRange = filters.range ? allMonths.slice(-filters.range) : allMonths;
   const history = inRange.map((m) => summarize(state, m, scoped));
