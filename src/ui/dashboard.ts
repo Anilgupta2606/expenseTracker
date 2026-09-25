@@ -147,20 +147,48 @@ function glancePanel(s: MonthSummary, txns: Txn[], prev: MonthSummary | undefine
   return section('Month at a glance', `<ul class="glance">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`);
 }
 
-function categoryPanel(spendCats: { category: string; total: number; count: number }[]): string {
-  const slices = toSlices(spendCats);
-  const total = spendCats.reduce((a, c) => a + c.total, 0) || 1;
+type PieMode = 'both' | 'spend' | 'investment';
+const PIE_MODES: { value: PieMode; label: string }[] = [
+  { value: 'both', label: 'Both' }, { value: 'spend', label: 'Spending' }, { value: 'investment', label: 'Investment' },
+];
+let pieMode: PieMode = (() => {
+  try { const v = localStorage.getItem('pie-mode'); return v === 'spend' || v === 'investment' ? v : 'both'; } catch { return 'both'; }
+})();
+
+type CatTotal = { category: string; total: number; count: number; kind: Kind };
+
+/** Where the month's money went: spending categories, investment types, or both in one donut. */
+function categoryPanel(spendCats: CatTotal[], investCats: CatTotal[]): string {
+  const both = pieMode === 'both';
+  // In "Both", investment slices carry a prefix so "Other Investment" and spend categories never blur.
+  const items: (CatTotal & { label: string })[] = [
+    ...(pieMode !== 'investment' ? spendCats.map((c) => ({ ...c, label: c.category })) : []),
+    ...(pieMode !== 'spend' ? investCats.map((c) => ({ ...c, label: both ? `Invest · ${c.category}` : c.category })) : []),
+  ];
+  const byLabel = new Map(items.map((c) => [c.label, c]));
+  const slices = toSlices(items.map((c) => ({ category: c.label, total: c.total, count: c.count })));
+  const total = items.reduce((a, c) => a + c.total, 0) || 1;
+  const centre = pieMode === 'spend' ? 'spent' : pieMode === 'investment' ? 'invested' : 'spent + invested';
+  const empty = pieMode === 'spend' ? 'No spending in this month.' : pieMode === 'investment' ? 'No investments in this month.' : 'No spending or investments in this month.';
   const body = slices.length ? `<div class="pie-wrap">
-      ${donutChart(slices, 'spent')}
+      ${donutChart(slices, centre)}
       <div class="pie-legend">
-        ${slices.map((sl) => `<a class="pie-row" href="#txns" data-kind="spend" ${sl.label.startsWith('Other (') ? '' : `data-category="${esc(sl.label)}"`}>
+        ${slices.map((sl) => {
+          const c = byLabel.get(sl.label);
+          const link = c ? `data-kind="${c.kind}" data-category="${esc(c.category)}"` : '';
+          return `<a class="pie-row" href="#txns" ${link}>
           <i class="sw" style="background:${sl.color}"></i>
           <span class="grow ellipsis">${esc(sl.label)} <span class="tiny">· ${sl.count}</span></span>
           <span class="num">${inr(sl.value)}</span><span class="tiny num pct">${Math.round((sl.value / total) * 100)}%</span>
-        </a>`).join('')}
+        </a>`;
+        }).join('')}
       </div>
-    </div>` : '<p class="muted small">No spending in this month.</p>';
-  return section('Spending by category', body, { note: 'Tap a category to see its transactions.' });
+    </div>` : `<p class="muted small">${empty}</p>`;
+  const toggle = `<span class="seg-toggle" role="group" aria-label="Show in chart">
+    ${PIE_MODES.map((m) => `<button data-pie="${m.value}" class="${pieMode === m.value ? 'on' : ''}" aria-pressed="${pieMode === m.value}">${m.label}</button>`).join('')}
+  </span>`;
+  const title = pieMode === 'spend' ? 'Spending by category' : pieMode === 'investment' ? 'Investments by type' : 'Spending & investments';
+  return section(title, body, { note: 'Tap a category to see its transactions.', action: toggle });
 }
 
 const RANGES: { value: number; label: string }[] = [{ value: 6, label: '6M' }, { value: 12, label: '12M' }, { value: 0, label: 'All' }];
@@ -234,7 +262,12 @@ export function renderDashboard(root: HTMLElement) {
   const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir && !t.excluded);
   const review = txns.filter((t) => t.category === 'Uncategorised');
   // Card bill payments count as spending; they appear as their own category.
-  const spendCats = byCategory([...of('spend', 'debit'), ...of('cc_bill', 'debit')]);
+  const spendCats = [
+    ...byCategory(of('spend', 'debit')).map((c) => ({ ...c, kind: 'spend' as Kind })),
+    ...byCategory(of('cc_bill', 'debit')).map((c) => ({ ...c, kind: 'cc_bill' as Kind })),
+  ].sort((a, b) => b.total - a.total);
+  // Money put into each investment type this month (the pie shows what went in, not redemptions).
+  const investedCats = byCategory(of('investment', 'debit')).map((c) => ({ ...c, kind: 'investment' as Kind }));
   const invCats = byCategory([...of('investment', 'debit'), ...of('investment', 'credit')]
     .map((t) => ({ ...t, amount: t.direction === 'debit' ? t.amount : -t.amount })));
   const points = (pick: (r: MonthSummary) => [number, number]): MonthPoint[] =>
@@ -272,7 +305,7 @@ export function renderDashboard(root: HTMLElement) {
     <div class="grid-2">
       ${budgetPanel(s)}
       ${glancePanel(s, txns, prev, spendCats)}
-      ${categoryPanel(spendCats)}
+      ${categoryPanel(spendCats, investedCats)}
       ${section('Spend and investment trend', history.length
         ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month)
         : '<p class="muted small">No data yet.</p>', { note: `Showing ${history.length} of ${allMonths.length} month${allMonths.length === 1 ? '' : 's'}. Tap a month to open it.`, action: rangeToggle() })}
@@ -303,6 +336,11 @@ export function renderDashboard(root: HTMLElement) {
   root.querySelectorAll('[data-plan]').forEach((b) => b.addEventListener('click', () => openPlanSheet(month)));
   root.querySelectorAll<HTMLElement>('[data-goto]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.goto) { filters.month = b.dataset.goto; render(); }
+  }));
+  root.querySelectorAll<HTMLElement>('[data-pie]').forEach((b) => b.addEventListener('click', () => {
+    pieMode = b.dataset.pie as PieMode;
+    try { localStorage.setItem('pie-mode', pieMode); } catch { /* remembered for this visit only */ }
+    render();
   }));
   root.querySelectorAll<HTMLElement>('[data-range]').forEach((b) => b.addEventListener('click', () => {
     filters.range = Number(b.dataset.range);

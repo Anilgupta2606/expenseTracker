@@ -100,7 +100,7 @@ export function donutChart(slices: Slice[], centerLabel: string): string {
       : `M${point(R, a0)} A${R},${R} 0 ${large} 1 ${point(R, a1)} L${point(r, a1)} A${r},${r} 0 ${large} 0 ${point(r, a0)} Z`;
     return `<path d="${d}" fill="${s.color}" class="slice" data-slice="${i}"><title>${esc(s.label)}: ${inr(s.value)} (${pct}%)</title></path>`;
   }).join('');
-  return `<svg viewBox="0 0 200 200" class="donut" role="img" aria-label="Spending by category">
+  return `<svg viewBox="0 0 200 200" class="donut" role="img" aria-label="Share by category">
     ${arcs}
     <text x="${C}" y="${C - 4}" text-anchor="middle" class="donut-total">${compact(total)}</text>
     <text x="${C}" y="${C + 14}" text-anchor="middle" class="axis">${esc(centerLabel)}</text>
