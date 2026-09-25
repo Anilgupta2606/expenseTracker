@@ -1,7 +1,7 @@
 import type { Txn } from '../types';
 import { KIND_LABEL } from '../categorize/categories';
 import type { AiSuggestion } from '../categorize/gemini';
-import { app, toast, update } from './app';
+import { app, navigate, toast, update } from './app';
 import { esc, inrFull } from './format';
 
 interface Change { txn: Txn; s: AiSuggestion; typeChanged: boolean; nameChanged: boolean }
@@ -19,6 +19,7 @@ export function openAiReview(suggestions: AiSuggestion[]) {
     return typeChanged || nameChanged || s.mixed ? [{ txn, s, typeChanged, nameChanged }] : [];
   });
   const mixed = changes.filter((c) => c.s.mixed).length;
+  const fixable = changes.filter((c) => c.typeChanged || c.nameChanged).length;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -26,22 +27,22 @@ export function openAiReview(suggestions: AiSuggestion[]) {
     <div class="grab"></div>
     <h2>AI suggestions</h2>
     <p class="small muted" style="margin-top:-4px">${changes.length
-      ? `${changes.length} change${changes.length > 1 ? 's' : ''} suggested${mixed ? `, ${mixed} row${mixed > 1 ? 's' : ''} flagged as possibly mixed up (check those against the PDF)` : ''}. Untick anything you don't want.`
+      ? `${fixable} change${fixable === 1 ? '' : 's'} suggested${mixed ? `, ${mixed} row${mixed > 1 ? 's' : ''} flagged as possibly mixed up (check those against the PDF)` : ''}.${fixable ? ' Untick anything you don\'t want.' : ''}`
       : 'The AI agrees with everything the app already has.'}</p>
     <div class="ai-list">
       ${changes.map((c, k) => `<label class="ai-item${c.s.mixed ? ' flagged' : ''}">
-        <input type="checkbox" data-k="${k}" ${c.typeChanged || c.nameChanged ? 'checked' : ''}>
+        ${c.typeChanged || c.nameChanged ? `<input type="checkbox" data-k="${k}" checked>` : '<span class="ai-flag" aria-hidden="true">⚠</span>'}
         <span class="grow">
           <span class="row between"><strong class="ellipsis">${esc(c.s.payee)}</strong><span class="num small">${c.txn.direction === 'credit' ? '+' : '−'}${inrFull(c.txn.amount)}</span></span>
           <span class="tiny">${esc(c.txn.date)} · was <em>${esc(c.txn.merchantName)}</em>, ${esc(KIND_LABEL[c.txn.kind])} / ${esc(c.txn.category)}</span>
           ${c.typeChanged ? `<span class="small">→ ${esc(KIND_LABEL[c.s.kind])} / ${esc(c.s.category)}</span>` : ''}
-          ${c.s.mixed ? `<span class="small bad">⚠ Looks mixed up${c.s.note ? `: ${esc(c.s.note)}` : ''}</span>` : c.s.note ? `<span class="tiny">${esc(c.s.note)}</span>` : ''}
+          ${c.s.mixed ? `<span class="small bad">⚠ Looks mixed up${c.s.note ? `: ${esc(c.s.note)}` : ''}${c.typeChanged || c.nameChanged ? '' : '. Nothing to apply here: tap Rescan on the statement, or fix it by hand in Transactions.'}</span>` : c.s.note ? `<span class="tiny">${esc(c.s.note)}</span>` : ''}
         </span>
       </label>`).join('')}
     </div>
     <div class="row" style="margin-top:12px">
       <button class="btn grow" data-close>${changes.length ? 'Cancel' : 'Close'}</button>
-      ${changes.length ? '<button class="btn primary grow" data-apply>Apply ticked</button>' : ''}
+      ${fixable ? '<button class="btn primary grow" data-apply>Apply ticked</button>' : ''}
     </div>
   </div>`;
   const close = () => backdrop.remove();
@@ -61,7 +62,7 @@ export function openAiReview(suggestions: AiSuggestion[]) {
         return s ? { ...t, kind: s.kind, category: s.category, merchantName: s.payee, source: 'ai' as const } : t;
       }),
     }));
-    toast(`Applied ${picked.size} suggestion${picked.size > 1 ? 's' : ''}`);
+    toast(`Applied ${picked.size} suggestion${picked.size > 1 ? 's' : ''}`, { label: 'View', run: () => navigate('#txns') });
   });
   document.body.append(backdrop);
 }

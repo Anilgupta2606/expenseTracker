@@ -53,12 +53,12 @@ function findHeader(rows: Cell[][]): { index: number; cols: Cols } | null {
 export function parseRows(rows: Cell[][]): ParseResult {
   const lines = rows.map((r) => r.map(text).filter(Boolean).join('  '));
   const joined = lines.join('\n');
+  const header = findHeader(rows);
   const meta = {
-    bank: detectBank(joined),
+    bank: detectBank(joined, lines.slice(0, header ? header.index : 20).join('\n')),
     accountNumber: detectAccountNumber(lines.slice(0, 30).join('\n')),
     holderName: detectHolderName(lines.slice(0, 30)),
   };
-  const header = findHeader(rows);
   if (!header) {
     return { meta, txns: [], balanceMismatches: 0, warnings: ['Could not find the header row (Date / Narration / Withdrawal / Deposit).'] };
   }

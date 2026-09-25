@@ -226,5 +226,11 @@ export function applyRescan(state: AppState, importId: string, rescan: RescanRes
     return { ...t, description, merchantKey: merchant.key, merchantName: merchant.name, source: t.source === 'ai' ? 'default' as const : t.source };
   });
   const txns = [...updated, ...rescan.missing].sort((a, b) => b.date.localeCompare(a.date));
-  return recategorizeAll({ ...state, imports, txns });
+  // An older reader could name the wrong bank; the new reading fixes the label.
+  const rec = state.imports.find((i) => i.id === importId);
+  const bank = rescan.result.meta.bank;
+  const accounts = bank && bank !== 'Unknown'
+    ? state.accounts.map((a) => (a.id === rec?.accountId ? { ...a, bank } : a))
+    : state.accounts;
+  return recategorizeAll({ ...state, accounts, imports, txns });
 }

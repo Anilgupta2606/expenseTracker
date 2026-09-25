@@ -102,7 +102,10 @@ export function parseLayout(pages: Page[], opts: LayoutOptions = {}): ParseResul
   const preLine = opts.preLine ?? 0.75;
   const allText = pages.flat().map(lineText);
   const joined = allText.join('\n');
-  const bank = detectBank(joined);
+  // The header is page 1 above the table (the first line that names a balance column).
+  const first = (pages[0] ?? []).map(lineText);
+  const tableAt = first.findIndex((l) => /\bbalance\b/i.test(l) && /withdrawal|debit|deposit|credit/i.test(l));
+  const bank = detectBank(joined, first.slice(0, tableAt >= 0 ? tableAt : 20).join('\n'));
   const warnings: string[] = [];
 
   let holderName = detectHolderName(allText);

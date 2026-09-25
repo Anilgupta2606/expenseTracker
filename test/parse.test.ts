@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { groupLines, parseLayout, type Page } from '../src/parse/layout';
 import { parseRows } from '../src/parse/sheet';
-import { parseDate } from '../src/parse/util';
+import { detectBank, parseDate } from '../src/parse/util';
 
 /** Builds a page from [y, [x, text][]] rows, the way pdf.js reports them. */
 function page(rows: [number, [number, string][]][]): Page {
@@ -163,5 +163,20 @@ describe('parseRows (Excel/CSV)', () => {
       ['2026-07-03', 'debit', 2000],
       ['2026-07-04', 'credit', 12.5],
     ]);
+  });
+});
+
+describe('which bank issued the statement', () => {
+  const narrations = Array.from({ length: 9 }, (_, i) => `UPI/Payee ${i}/x@okhdfcbank/Sent/HDFC BANK/61826874${i}`).join('\n');
+  it('trusts the header over bank names in narrations', () => {
+    const header = 'Statement of Transactions in Saving Account no. 055801624441\nANIL GUPTA Your Base Branch: ICICI BANK LIMITED,';
+    expect(detectBank(`${header}\n${narrations}`, header)).toBe('ICICI');
+  });
+  it('uses the IFSC code in the header first', () => {
+    const header = 'Address : Some Branch\nRTGS/NEFT IFSC : HDFC0007128 MICR : 110240550';
+    expect(detectBank(`${header}\nNEFT-ICICI BANK LTD-X\nICICI BANK`, header)).toBe('HDFC');
+  });
+  it('falls back to counting when the header names no bank', () => {
+    expect(detectBank(narrations, 'Account statement')).toBe('HDFC');
   });
 });
