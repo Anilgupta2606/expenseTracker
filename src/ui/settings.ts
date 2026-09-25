@@ -87,7 +87,7 @@ export function renderSettings(root: HTMLElement) {
       <label class="field"><span>Gemini API key</span><input type="password" id="gkey" value="${esc(s.geminiKey ?? '')}" autocomplete="off" placeholder="AIza…"></label>
       <label class="field"><span>Model</span>
         <select id="gmodel">${[...new Set([DEFAULT_GEMINI_MODEL, s.geminiModel ?? DEFAULT_GEMINI_MODEL, ...geminiModels])].map((m) => `<option value="${esc(m)}" ${m === (s.geminiModel ?? DEFAULT_GEMINI_MODEL) ? 'selected' : ''}>${esc(m)}${m === DEFAULT_GEMINI_MODEL ? ' (recommended)' : ''}</option>`).join('')}</select>
-        <span class="tiny">${geminiModels.length ? `${geminiModels.length} models available to your key.` : 'Tap “Check key” to load every model your key can use.'} ${DEFAULT_GEMINI_MODEL} always points to Google's current free Flash model.</span></label>
+        <span class="tiny">${geminiModels.length ? `${geminiModels.length} models available to your key.` : 'Tap “Check key” to load every model your key can use.'} ${DEFAULT_GEMINI_MODEL} always points to Google's current free Flash model; if it is busy the app switches to Flash-Lite by itself.</span></label>
       ${geminiStatus ? `<p class="small ${geminiStatus.ok ? 'ok' : 'bad'}">${esc(geminiStatus.text)}</p>` : ''}
       <div class="row wrap"><button class="btn" id="check-gemini">Check key</button><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
     </div>

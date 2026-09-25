@@ -51,6 +51,24 @@ describe('checkWithGemini', () => {
     expect(urls.map((u) => u.split('/models/')[1].split(':')[0])).toEqual(['gemini-2.5-flash', 'gemini-flash-latest']);
   });
 
+  it('retries a busy model once, then moves to Flash-Lite and stays there', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      urls.push(url);
+      if (url.includes('gemini-flash-latest:')) return new Response('high demand', { status: 503 });
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ rows: [] }) }] } }] }), { status: 200 });
+    }));
+    const many = Array.from({ length: 61 }, (_, i) => txn({ id: `t${i}` }));
+    await checkWithGemini(many, { ...emptyState().settings, geminiKey: 'k' }, undefined, 0);
+    expect(urls.map((u) => u.split('/models/')[1].split(':')[0]))
+      .toEqual(['gemini-flash-latest', 'gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-flash-lite-latest']);
+  });
+
+  it('says the servers are busy when every model is', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('high demand', { status: 503 })));
+    await expect(checkWithGemini([txn({})], { ...emptyState().settings, geminiKey: 'k' }, undefined, 0)).rejects.toThrow(/busy/);
+  });
+
   it('explains common errors', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('quota', { status: 429 })));
     const settings = { ...emptyState().settings, geminiKey: 'k' };
