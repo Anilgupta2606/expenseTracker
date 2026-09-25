@@ -1,7 +1,29 @@
 import type { Kind, Settings, Txn } from '../types';
 import { CATEGORIES, isValidCategory } from './categories';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+/** Google's alias for its current free Flash model; survives model retirements. */
+export const DEFAULT_GEMINI_MODEL = 'gemini-flash-latest';
+
+class ModelNotFound extends Error {}
+
+/** Text models this key can use, for the model picker in Settings. */
+export async function listGeminiModels(key: string): Promise<string[]> {
+  let res: Response;
+  try {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(key)}`);
+  } catch {
+    throw new Error('Could not reach Google Gemini. Check your internet connection.');
+  }
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error('Google rejected this API key. Copy it again from aistudio.google.com/apikey.');
+    throw new Error(`Gemini returned an error (${res.status}).`);
+  }
+  const data = await res.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+  return (data.models ?? [])
+    .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+    .map((m) => m.name.replace(/^models\//, ''))
+    .filter((n) => /^gemini/.test(n) && !/tts|image|audio|live|embed|computer-use|robotics|transcribe|omni|customtools/.test(n));
+}
 
 const KINDS: Kind[] = ['spend', 'investment', 'income', 'transfer', 'cc_bill'];
 const ALL_CATEGORIES = [...new Set(KINDS.flatMap((k) => CATEGORIES[k]))];
@@ -85,7 +107,7 @@ async function callGemini(key: string, model: string, rows: ReturnType<typeof ma
     const body = await res.text().catch(() => '');
     if (res.status === 400 && /API key/i.test(body)) throw new Error('Google rejected the API key. Check it in Settings.');
     if (res.status === 403) throw new Error('This API key is not allowed to use Gemini. Create a new key at aistudio.google.com.');
-    if (res.status === 404) throw new Error(`Model "${model}" was not found. Change the model name in Settings.`);
+    if (res.status === 404) throw new ModelNotFound(`Model "${model}" is not available to this key. Pick another model in Settings.`);
     if (res.status === 429) throw new Error('Free Gemini limit reached for now. Wait a minute (or until tomorrow) and try again.');
     throw new Error(`Gemini returned an error (${res.status}).`);
   }
@@ -103,7 +125,15 @@ export async function checkWithGemini(txns: Txn[], settings: Settings, onProgres
   for (let s = 0; s < txns.length; s += BATCH) {
     onProgress?.(s, txns.length);
     const batch = txns.slice(s, s + BATCH);
-    const rows = await callGemini(settings.geminiKey, model, batch.map((t) => maskRow(t, settings.ownNames)));
+    const masked = batch.map((t) => maskRow(t, settings.ownNames));
+    let rows;
+    try {
+      rows = await callGemini(settings.geminiKey, model, masked);
+    } catch (e) {
+      // A retired model: fall back to Google's always-current alias.
+      if (!(e instanceof ModelNotFound) || model === DEFAULT_GEMINI_MODEL) throw e;
+      rows = await callGemini(settings.geminiKey, DEFAULT_GEMINI_MODEL, masked);
+    }
     for (const r of rows) {
       const t = batch[r.i];
       if (!t || !KINDS.includes(r.kind) || !isValidCategory(r.kind, r.category)) continue;
