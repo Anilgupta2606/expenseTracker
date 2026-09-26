@@ -1,3 +1,4 @@
+import { bindSyncCard, syncCard } from './syncUi';
 import type { AppState, Kind } from '../types';
 import { CATEGORIES, categoryCounted, categoryKey, KIND_LABEL } from '../categorize/categories';
 import { recategorizeAll } from '../importer';
@@ -118,6 +119,8 @@ export function renderSettings(root: HTMLElement) {
       <div class="row wrap"><button class="btn" id="check-gemini">Check key</button><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
     </div>
 
+    ${syncCard()}
+
     <div class="card">
       <h2>Your data</h2>
       <p class="small muted" style="margin-top:-4px">Stored only in this browser. Export a backup now and then, especially before clearing Safari data.</p>
@@ -134,6 +137,7 @@ export function renderSettings(root: HTMLElement) {
     <p class="tiny" style="text-align:center">Expense Tracker · everything stays on this device</p>
   `;
 
+  bindSyncCard(root);
   const val = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)!.value;
 
   root.querySelector('#save-cred')!.addEventListener('click', async () => {

@@ -12,6 +12,7 @@ import { LOGO, renderLogin } from './ui/login';
 import { esc } from './ui/format';
 import { applyTheme, getTheme, setTheme, type Theme } from './theme';
 import { planLink, planOpener } from './links';
+import { runSync, startSync } from './ui/syncUi';
 
 applyTheme();
 const initialsOf = (name: string) => (name.trim().slice(0, 2) || '?').toUpperCase();
@@ -131,7 +132,7 @@ function render() {
   if (!isSignedIn()) {
     view = null;
     document.body.classList.add('signed-out');
-    renderLogin(root, () => { document.body.classList.remove('signed-out'); render(); void takeSharedFiles(); });
+    renderLogin(root, () => { document.body.classList.remove('signed-out'); render(); void takeSharedFiles(); void runSync(true); });
     return;
   }
   document.body.classList.remove('signed-out');
@@ -196,11 +197,12 @@ async function takeSharedFiles() {
   } catch { location.hash = '#upload'; }
 }
 window.addEventListener('hashchange', render);
+startSync();
 
 loadState().then((state) => {
   app.state = state;
   render();
-  if (isSignedIn()) void takeSharedFiles();
+  if (isSignedIn()) { void takeSharedFiles(); void runSync(true); }
   void recheckBanks();
 });
 

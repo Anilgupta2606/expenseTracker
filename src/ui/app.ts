@@ -23,7 +23,11 @@ let renderFn: () => void = () => {};
 export function onRender(fn: () => void) { renderFn = fn; }
 export function render() { renderFn(); }
 
-export async function update(fn: (s: AppState) => AppState): Promise<void> {
+let changeHook: () => void = () => {};
+/** Called after every change made on this device (sync uses it to push). */
+export function onChange(fn: () => void) { changeHook = fn; }
+
+export async function update(fn: (s: AppState) => AppState, opts: { fromSync?: boolean } = {}): Promise<void> {
   app.state = fn(app.state);
   render();
   try {
@@ -31,6 +35,7 @@ export async function update(fn: (s: AppState) => AppState): Promise<void> {
   } catch (e) {
     toast(`Could not save: ${(e as Error).message}`);
   }
+  if (!opts.fromSync) changeHook();
 }
 
 export function navigate(route: string) {
