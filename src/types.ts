@@ -64,6 +64,8 @@ export interface Account {
   bankChecked?: boolean;
   id: string; // e.g. HDFC-1234
   bank: string;
+  /** You named the bank yourself in Settings; statements never relabel it. */
+  bankSet?: 'manual';
   number: string;
   holderName?: string;
 }

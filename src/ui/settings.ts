@@ -4,6 +4,8 @@ import { CATEGORIES, categoryCounted, categoryKey, KIND_LABEL } from '../categor
 import { recategorizeAll } from '../importer';
 
 let geminiStatus: { ok: boolean; text: string } | null = null;
+let editingAccount: string | null = null;
+const BANK_NAMES = ['HDFC', 'ICICI', 'SBI', 'Axis', 'Kotak', 'IDFC', 'Yes', 'PNB', 'BoB', 'IndusInd', 'AU', 'Federal'];
 import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
@@ -80,11 +82,18 @@ export function renderSettings(root: HTMLElement) {
 
     <div class="card">
       <h2>Accounts</h2>
-      ${state.accounts.length ? `<table class="simple">
+      ${state.accounts.length ? `<p class="small muted" style="margin-top:-4px">Bank read wrongly? Tap Edit and pick the right one; later uploads won't change it.</p>
+      <table class="simple">
         <tr><th>Account</th><th>Transactions</th><th></th></tr>
-        ${state.accounts.map((a) => `<tr><td>${esc(a.bank)} ••${esc(a.number.slice(-4))}<div class="tiny">${esc(a.holderName ?? '')}</div></td>
+        ${state.accounts.map((a) => editingAccount === a.id
+          ? `<tr><td colspan="3"><div class="row wrap" style="gap:8px;align-items:flex-end">
+              <label class="field grow" style="margin:0"><span>Bank for ••${esc(a.number.slice(-4))}</span>
+                <input type="text" id="acct-bank" list="bank-names" value="${esc(a.bank)}" autocomplete="off"></label>
+              <datalist id="bank-names">${BANK_NAMES.map((b) => `<option value="${b}">`).join('')}</datalist>
+              <button class="btn" data-cancel-account>Cancel</button><button class="btn primary" data-save-account="${esc(a.id)}">Save</button></div></td></tr>`
+          : `<tr><td>${esc(a.bank)} ••${esc(a.number.slice(-4))}${a.bankSet === 'manual' ? ' <span class="tiny">(set by you)</span>' : ''}<div class="tiny">${esc(a.holderName ?? '')}</div></td>
           <td class="num">${state.txns.filter((t) => t.accountId === a.id).length}</td>
-          <td style="text-align:right"><button class="btn danger" data-del-account="${esc(a.id)}">Delete</button></td></tr>`).join('')}
+          <td style="text-align:right;white-space:nowrap"><button class="btn" data-edit-account="${esc(a.id)}">Edit</button> <button class="btn danger" data-del-account="${esc(a.id)}">Delete</button></td></tr>`).join('')}
       </table>` : '<p class="muted small">No accounts yet. Upload a statement to add one.</p>'}
     </div>
 
@@ -138,6 +147,22 @@ export function renderSettings(root: HTMLElement) {
   `;
 
   bindSyncCard(root);
+  root.querySelectorAll<HTMLElement>('[data-edit-account]').forEach((b) => b.addEventListener('click', () => {
+    editingAccount = b.dataset.editAccount!;
+    render();
+    root.querySelector<HTMLInputElement>('#acct-bank')?.select();
+  }));
+  root.querySelector('[data-cancel-account]')?.addEventListener('click', () => { editingAccount = null; render(); });
+  const saveAccount = async () => {
+    const id = editingAccount;
+    const bank = root.querySelector<HTMLInputElement>('#acct-bank')?.value.trim().slice(0, 30);
+    if (!id || !bank) { toast('Type the bank name'); return; }
+    editingAccount = null;
+    await update((st) => ({ ...st, accounts: st.accounts.map((a) => (a.id === id ? { ...a, bank, bankSet: 'manual', bankChecked: true } : a)) }));
+    toast(`Saved as ${bank}`);
+  };
+  root.querySelector('[data-save-account]')?.addEventListener('click', () => void saveAccount());
+  root.querySelector('#acct-bank')?.addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === 'Enter') void saveAccount(); });
   const val = (id: string) => root.querySelector<HTMLInputElement | HTMLSelectElement>(`#${id}`)!.value;
 
   root.querySelector('#save-cred')!.addEventListener('click', async () => {
