@@ -213,7 +213,7 @@ loadState().then((state) => {
  */
 async function recheckBanks() {
   const { bankOfFile } = await import('./importer');
-  for (const account of app.state.accounts.filter((a) => !a.bankChecked)) {
+  for (const account of app.state.accounts.filter((a) => !a.bankChecked && a.bankSet !== 'manual')) {
     const rec = app.state.imports.find((i) => i.accountId === account.id && i.hasFile);
     let bank: string | undefined;
     try {

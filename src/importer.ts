@@ -24,9 +24,16 @@ export function accountFor(result: ParseResult, state: AppState, fileName: strin
   const last4 = digits.slice(-4) || hash(fileName).slice(0, 4);
   const id = `${bank}-${last4}`;
   // The same account number is the same account, even if an older upload named the bank differently.
+  const byLast4 = state.accounts.filter((a) => a.number.replace(/\D/g, '').slice(-4) === last4);
   const existing = state.accounts.find((a) => a.id === id)
-    ?? (digits.length >= 8 ? state.accounts.find((a) => a.number.replace(/\D/g, '') === digits) : undefined);
-  if (existing) return { account: existing, isNew: false };
+    ?? (digits.length >= 8 ? state.accounts.find((a) => a.number.replace(/\D/g, '') === digits) : undefined)
+    // Only the last four digits to go on: one account ending that way is the one.
+    ?? (digits.length >= 4 && byLast4.length === 1 ? byLast4[0] : undefined);
+  if (existing) {
+    // A fresh reading corrects a label an older reader got wrong, unless you set it yourself.
+    const relabel = bank !== 'Unknown' && bank !== existing.bank && existing.bankSet !== 'manual';
+    return { account: relabel ? { ...existing, bank } : existing, isNew: false };
+  }
   return { account: { id, bank, number: accountNumber ?? last4, holderName, bankChecked: true }, isNew: true };
 }
 
@@ -96,7 +103,7 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
 }
 
 export function commitPreview(state: AppState, preview: ImportPreview): AppState {
-  const accounts = preview.isNewAccount ? [...state.accounts, preview.account] : state.accounts;
+  const accounts = preview.isNewAccount ? [...state.accounts, preview.account] : state.accounts.map((a) => (a.id === preview.account.id ? preview.account : a));
   const changed = new Map(preview.updated.map((t) => [t.id, t]));
   const txns = [...state.txns.map((t) => changed.get(t.id) ?? t), ...preview.fresh].sort((a, b) => b.date.localeCompare(a.date));
   const imports = preview.fresh.length ? [...state.imports, preview.record] : state.imports;
@@ -340,7 +347,7 @@ export function applyRescan(state: AppState, importId: string, rescan: RescanRes
   const rec = state.imports.find((i) => i.id === importId);
   const bank = rescan.result.meta.bank;
   const accounts = bank && bank !== 'Unknown'
-    ? state.accounts.map((a) => (a.id === rec?.accountId ? { ...a, bank } : a))
+    ? state.accounts.map((a) => (a.id === rec?.accountId && a.bankSet !== 'manual' ? { ...a, bank } : a))
     : state.accounts;
   return recategorizeAll({ ...state, accounts, imports, txns });
 }
