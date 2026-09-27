@@ -205,6 +205,76 @@ export async function listModels(id: ProviderId, key: string): Promise<string[]>
   return ((data.data ?? []) as { id: string }[]).map((m) => m.id);
 }
 
+/* ------------------------------------------------------------------ the best model */
+
+/** Not chat models, or not useful for reading statements: never picked. */
+const NOT_CHAT = /embed|tts|whisper|audio|speech|transcribe|image|imagen|veo|lyria|dall|vision-only|guard|moderation|ocr|rerank|live|realtime|robotics|computer-use|omni|customtools|aqa|learnlm|search|compound|playai|safeguard/i;
+/** Strong, fast general models first (checked Sep 2026); anything not listed is ranked by its size. */
+const PREFER = ['gpt-oss-120b', 'kimi-k2', 'qwen3-235b', 'qwen-3-235b', 'llama-4-maverick', 'deepseek-v3', 'llama-3.3-70b', 'mistral-large',
+  'mistral-medium', 'qwen3-32b', 'qwen-3-32b', 'llama-4-scout', 'mistral-small', 'gpt-oss-20b', 'gemma-3-27b', 'deepseek-r1', 'ministral-8b', 'llama-3.1-8b', 'llama3.1-8b', 'ministral-3b'];
+const sizeB = (m: string) => Number(m.match(/(\d+(?:\.\d+)?)b\b/i)?.[1] ?? 0);
+const verOf = (m: string) => Number(m.match(/(\d+(?:\.\d+)?)/)?.[1] ?? 0);
+const prefIdx = (m: string) => { const i = PREFER.findIndex((p) => m.toLowerCase().includes(p)); return i < 0 ? PREFER.length : i; };
+
+/**
+ * The models a key can use, best first, for this app's job (reading statement rows into JSON):
+ * Gemini - the newest stable Flash (Pro has tiny free limits, Lite is weaker, previews come and
+ * go); Groq, Cerebras, Mistral, OpenRouter - the strongest general models first, then by size
+ * (OpenRouter: only the free ones); Claude - Haiku first (cheapest); Ollama - the smallest first,
+ * because an 8 GB laptop stalls on big ones.
+ */
+export function rankModels(id: ProviderId, names: string[]): string[] {
+  const uniq = [...new Set(names)].filter((m) => !NOT_CHAT.test(m));
+  if (id === 'gemini') {
+    const g = uniq.filter((m) => /^gemini/.test(m) && !/gemma|nano|tuning/.test(m));
+    const preview = (m: string) => (/preview|exp|thinking/.test(m) ? 1 : 0);
+    const kind = (m: string) => (/lite/.test(m) ? 2 : /flash/.test(m) ? 3 : /pro/.test(m) ? 1 : 0);
+    const alias = (m: string) => /-latest$/.test(m);
+    // an alias ("gemini-flash-latest") counts as the newest of its kind, placed just after it
+    const newest = (k: number) => Math.max(0, ...g.filter((m) => !alias(m) && !preview(m) && kind(m) === k).map(verOf));
+    const score = (m: string) => [preview(m), -kind(m), -(alias(m) ? newest(kind(m)) : verOf(m)), alias(m) ? 1 : 0];
+    return g.sort((a, b) => { const x = score(a), y = score(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return a.localeCompare(b); });
+  }
+  if (id === 'anthropic') {
+    const tier = (m: string) => (/haiku/.test(m) ? 0 : /sonnet/.test(m) ? 1 : 2);
+    return uniq.filter((m) => /^claude/.test(m) && !/opus/.test(m)).sort((a, b) => tier(a) - tier(b) || verOf(b.replace(/^claude-\D*/, '')) - verOf(a.replace(/^claude-\D*/, '')));
+  }
+  if (id === 'ollama') {
+    return uniq.sort((a, b) => (sizeB(a) || 99) - (sizeB(b) || 99));
+  }
+  let list = uniq;
+  if (id === 'openrouter') list = uniq.filter((m) => /:free$/.test(m) || m === 'openrouter/free');
+  const ranked = list.filter((m) => m !== 'openrouter/free').sort((a, b) => prefIdx(a) - prefIdx(b) || sizeB(b) - sizeB(a) || a.localeCompare(b));
+  return id === 'openrouter' && list.includes('openrouter/free') ? [...ranked.slice(0, 3), 'openrouter/free', ...ranked.slice(3)] : ranked;
+}
+
+const MODELS_KEY = 'et-ai-models';
+const MODELS_TTL = 24 * 3600 * 1000;
+type ModelCache = Partial<Record<ProviderId, { at: number; key: string; models: string[] }>>;
+const readModels = (): ModelCache => { try { return JSON.parse(localStorage.getItem(MODELS_KEY) || '{}') as ModelCache; } catch { return {}; } };
+const keyTag = (key: string) => key.slice(-6);
+/** The ranked list saved by the last check (for Settings), if it belongs to this key. */
+export function knownModels(id: ProviderId, key: string | undefined): string[] {
+  const c = readModels()[id];
+  return c && key && c.key === keyTag(key) ? c.models : [];
+}
+export function rememberModels(id: ProviderId, key: string, models: string[]) {
+  const m = readModels(); m[id] = { at: Date.now(), key: keyTag(key), models };
+  try { localStorage.setItem(MODELS_KEY, JSON.stringify(m)); } catch { /* storage blocked */ }
+}
+/** Ranked models for a key: remembered for a day, else asked for; the built-in list if that fails. */
+export async function bestModels(id: ProviderId, key: string): Promise<string[]> {
+  const c = readModels()[id];
+  if (c && c.key === keyTag(key) && Date.now() - c.at < MODELS_TTL && c.models.length) return c.models;
+  try {
+    const ranked = rankModels(id, await listModels(id, key));
+    if (ranked.length) { rememberModels(id, key, ranked); return ranked; }
+  } catch { /* offline, or the list is not open to this key: use the built-in list */ }
+  return providerInfo(id).models;
+}
+/** The model you pinned in Settings, or undefined for Auto (the best available). */
+export const pinnedModel = (s: Settings, id: ProviderId) => { const m = s.aiModel?.[id]; return m && m !== 'auto' ? m : undefined; };
+
 /* ------------------------------------------------------------------ the session */
 
 export interface AiAnswerInfo { provider: ProviderId; model: string }
@@ -219,16 +289,12 @@ export class AiSession {
   last: AiAnswerInfo | null = null;
   constructor(private settings: Settings, private retryDelay = 2000, private timeoutMs = 90_000) {}
 
+  /** Your pinned model, else the one that answered this session, then the best available, then the
+   *  built-in list - at most four tries per service, so a bad day does not mean a long wait. */
   private async modelsFor(id: ProviderId, key: string): Promise<string[]> {
-    const base = providerInfo(id).models;
-    if (id === 'ollama' && !this.discovered.has(id)) {
-      this.discovered.add(id);
-      const have = await listModels(id, key).catch(() => []);
-      // small models first on a laptop; embedding models cannot answer
-      return have.filter((m) => !/embed/i.test(m)).sort((a, b) => (Number(a.match(/(\d+(?:\.\d+)?)b/i)?.[1] ?? 99) - Number(b.match(/(\d+(?:\.\d+)?)b/i)?.[1] ?? 99)));
-    }
-    const first = this.chosen.get(id);
-    return first ? [first, ...base.filter((m) => m !== first)] : base;
+    const ranked = await bestModels(id, key);
+    const lead = [pinnedModel(this.settings, id), this.chosen.get(id)].filter((m): m is string => Boolean(m));
+    return [...new Set([...lead, ...ranked, ...providerInfo(id).models])].slice(0, Math.max(4, lead.length + 2));
   }
 
   private async ask<T>(id: ProviderId, key: string, model: string, prompt: string, schema: object): Promise<T> {

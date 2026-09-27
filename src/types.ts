@@ -95,6 +95,8 @@ export interface Settings {
   aiOrder?: string[];
   /** AI services switched off (their keys are kept). */
   aiOff?: string[];
+  /** A model you pinned for a service; missing or "auto" means the best available. */
+  aiModel?: Partial<Record<string, string>>;
   /** Your investment plan page, opened from the profile menu. Empty string hides the link. */
   planLink?: string;
   /** @deprecated The app picks the model; kept so old saved data still loads. */
