@@ -1,5 +1,9 @@
 import type { Kind, ParsedTxn, Settings, Txn } from '../types';
 import { CATEGORIES, isValidCategory } from './categories';
+import { aiSession, hasAi } from '../ai/providers';
+
+/** Anything that answers a prompt with JSON: the multi-service AiSession, or a GeminiSession. */
+export interface JsonSession { generate<T>(prompt: string, schema: object): Promise<T> }
 
 /**
  * Google's aliases for its current free Flash and Flash-Lite models, best
@@ -191,7 +195,7 @@ export type RowSuggestion = Omit<AiSuggestion, 'id'>;
 
 /** Payee, type and category for each row, looking at one row's own text at a time. */
 export async function suggestForRows(
-  rows: RowLike[], ownNames: string[], session: GeminiSession, onProgress?: (done: number, total: number) => void,
+  rows: RowLike[], ownNames: string[], session: JsonSession, onProgress?: (done: number, total: number) => void,
 ): Promise<(RowSuggestion | undefined)[]> {
   const out: (RowSuggestion | undefined)[] = rows.map(() => undefined);
   const BATCH = 60;
@@ -211,7 +215,7 @@ export async function suggestForRows(
 }
 
 export async function checkWithGemini(txns: Txn[], settings: Settings, onProgress?: (done: number, total: number) => void, retryDelay = 2000): Promise<AiSuggestion[]> {
-  if (!settings.geminiKey) throw new Error('Add your free Gemini API key in Settings first.');
-  const found = await suggestForRows(txns, settings.ownNames, new GeminiSession(settings.geminiKey, retryDelay), onProgress);
+  if (!hasAi(settings)) throw new Error('Add a free AI key in Settings → AI assistants first.');
+  const found = await suggestForRows(txns, settings.ownNames, aiSession(settings, retryDelay), onProgress);
   return found.flatMap((s, i) => (s ? [{ ...s, id: txns[i].id, payee: s.payee || txns[i].merchantName }] : []));
 }

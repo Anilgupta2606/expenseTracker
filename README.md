@@ -36,11 +36,11 @@ Password-protected PDFs are supported: the app asks for the password.
 4. **Merchant rules** — ~200 Indian merchants and keywords (Swiggy, Blinkit, Airtel, Netflix, IRCTC, pharmacies, fuel, CBDT tax, GST charges…).
 5. **People vs shops** — UPI payments to a phone number or a person's name become "Payments to People"; shop QR codes (paytmqr, BharatPe, …) with no known merchant are marked **Needs category**.
 
-## Optional free AI check (Google Gemini)
+## Optional free AI (several services)
 
-Settings → *Free AI check*: paste a free API key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey). On the Upload screen, **AI check** sends a statement's rows to Gemini and shows suggested payee names and categories (and rows that look mixed up) for you to accept or untick.
+Settings → *AI assistants*: add a free key for any of **Google Gemini**, **Groq**, **Cerebras**, **Mistral** or **OpenRouter** (Anthropic Claude is there too, paid; **Ollama** runs a model on your own computer). Each request goes to the first service in your order that is switched on; a service that runs out of its free limit rests for 15 minutes (shown yellow) and the next one answers, the way the trading dashboard (ATS) does it. Every one of these accepts calls straight from the browser, so there is still no server.
 
-Only date, amount, money in/out and the narration are sent, with long numbers replaced by `#` and your name by `SELF`; balances and the PDF are never sent. On Google's free tier, Google may use what you send to improve its products. The check needs the app's own website (it does not work inside the claude.ai preview).
+The AI is used by **AI check** and the AI statement reader on the Upload screen, and by the **Assistant**. Only date, amount, money in/out and the narration are sent, with long numbers replaced by `#` and your name by `SELF`; the statement reader also sends the table's amounts and balances, never your name or account numbers. Free tiers may use what you send to improve their products. Keys stay on your device (and in the encrypted sync); backups never contain them.
 
 ## Monthly plan
 

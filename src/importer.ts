@@ -178,7 +178,7 @@ const isPdf = (fileName: string, type: string) => /\.pdf$/i.test(fileName) || ty
 export interface ReadProgress { stage: 'local' | 'ai-read' | 'ai-titles'; done: number; total: number }
 
 /**
- * Reads a statement. The on-device reader reads the rows; with a Gemini key,
+ * Reads a statement. The on-device reader reads the rows; with an AI key,
  * the AI reads the table instead when the running balance doesn't add up
  * (only the table, with numbers and names masked), and then the AI cleans up
  * every row's title and category from that row's own text.
@@ -206,10 +206,10 @@ export async function readStatement(
     }
     result = { ...best!, reader: 'local' };
   }
-  if (!settings?.geminiKey) return result;
+  if (!settings || !(await import('./ai/providers')).hasAi(settings)) return result;
 
-  const [{ scanWithGemini, pickReading }, { GeminiSession, suggestForRows }, { groupLines }] = await Promise.all([
-    import('./parse/aiScan'), import('./categorize/gemini'), import('./parse/layout'),
+  const [{ scanWithGemini, pickReading }, { suggestForRows }, { groupLines }, { aiSession }] = await Promise.all([
+    import('./parse/aiScan'), import('./categorize/gemini'), import('./parse/layout'), import('./ai/providers'),
   ]);
   if (items && (result.balanceMismatches > 0 || !result.txns.length)) {
     try {
@@ -222,7 +222,7 @@ export async function readStatement(
   }
   if (!result.txns.length) return result;
   try {
-    const session = new GeminiSession(settings.geminiKey);
+    const session = aiSession(settings);
     const found = await suggestForRows(result.txns, [...settings.ownNames, ...(result.meta.holderName ? [result.meta.holderName] : [])], session,
       (done, total) => onProgress?.({ stage: 'ai-titles', done, total }));
     const mixed = found.filter((s) => s?.mixed).length;

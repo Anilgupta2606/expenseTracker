@@ -22,8 +22,8 @@ function progressText(p: ReadProgress): string {
 
 /** The note shown on a statement: which reader read it. */
 function readerPill(r: { reader?: 'ai' | 'local'; aiTitles?: boolean }): string {
-  const read = r.reader === 'ai' ? '<span class="pill" title="Rows read by Gemini, checked against the running balance">Rows read by AI</span>' : '';
-  const titles = r.aiTitles ? '<span class="pill ok" title="Titles and categories cleaned up by Gemini">AI titles</span>' : '';
+  const read = r.reader === 'ai' ? '<span class="pill" title="Rows read by AI, checked against the running balance">Rows read by AI</span>' : '';
+  const titles = r.aiTitles ? '<span class="pill ok" title="Titles and categories cleaned up by AI">AI titles</span>' : '';
   return read + titles;
 }
 /** A rescan or AI check that is running, shown on its statement until it finishes. */
@@ -88,7 +88,7 @@ function previewCard(p: Pending, i: number): string {
       <tr><td>Balance check</td><td>${!hasBalance ? '<span class="muted">No balance column</span>'
         : result.balanceMismatches === 0 ? '<span class="ok">✓ Every row adds up</span>'
         : `<span class="bad">${result.balanceMismatches} row(s) don't add up — check them</span>`}</td></tr>
-      <tr><td>Read by</td><td>${result.reader === 'ai' ? 'AI (Gemini), checked against the balance' : 'This device'}${result.aiTitles ? ' · <span class="ok">titles by AI</span>' : ''}</td></tr>
+      <tr><td>Read by</td><td>${result.reader === 'ai' ? 'AI, checked against the balance' : 'This device'}${result.aiTitles ? ' · <span class="ok">titles by AI</span>' : ''}</td></tr>
       <tr><td>New</td><td class="num">${fresh.length}${pv.duplicates ? ` <span class="muted">(${pv.duplicates} already imported)</span>` : ''}</td></tr>
     </table>
     ${result.warnings.filter((w) => /AI/.test(w)).map((w) => `<p class="tiny" style="margin:6px 0 0">${esc(w)}</p>`).join('')}
@@ -189,8 +189,8 @@ async function rescan(importId: string) {
 }
 
 async function aiCheck(importId: string) {
-  if (!app.state.settings.geminiKey) {
-    toast('Add your free Gemini API key in Settings first.', { label: 'Open Settings', run: () => navigate('#settings') });
+  if (!(await import('../ai/providers')).hasAi(app.state.settings)) {
+    toast('Add a free AI key in Settings → AI assistants first.', { label: 'Open Settings', run: () => navigate('#settings') });
     return;
   }
   const txns = app.state.txns.filter((t) => t.importId === importId);
@@ -216,7 +216,7 @@ function progressNote(w: NonNullable<typeof working>): string {
   // Show a little progress before the first batch comes back, so the bar never looks stuck at zero.
   const pct = w.total ? Math.max(8, Math.round((w.done / w.total) * 100)) : 8;
   return `<div class="work-note" role="status"><span class="spinner"></span><div class="grow">
-      <div>AI check in progress: Gemini is reading ${w.total} rows${w.done ? ` (${w.done} done)` : ''}. This usually takes 10–60 seconds; keep this page open.</div>
+      <div>AI check in progress: the AI is reading ${w.total} rows${w.done ? ` (${w.done} done)` : ''}. This usually takes 10–60 seconds; keep this page open.</div>
       <div class="work-bar"><span style="width:${pct}%"></span></div>
     </div></div>`;
 }

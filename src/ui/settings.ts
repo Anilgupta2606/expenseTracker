@@ -3,7 +3,7 @@ import type { AppState, Kind } from '../types';
 import { CATEGORIES, categoryCounted, categoryKey, KIND_LABEL } from '../categorize/categories';
 import { recategorizeAll } from '../importer';
 
-let geminiStatus: { ok: boolean; text: string } | null = null;
+const aiStatus: Partial<Record<string, { ok: boolean; text: string }>> = {};
 let editingAccount: string | null = null;
 const BANK_NAMES = ['HDFC', 'ICICI', 'SBI', 'Axis', 'Kotak', 'IDFC', 'Yes', 'PNB', 'BoB', 'IndusInd', 'AU', 'Federal'];
 import { emptyState, migrate } from '../store';
@@ -11,8 +11,46 @@ import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
 import { esc, kindVar } from './format';
 import { DEFAULT_PLAN_LINK } from '../links';
+import { PROVIDERS, isOn, keyOf, listModels, orderOf, providerInfo, restingUntil, wake, type ProviderId } from '../ai/providers';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+
+/** One row per AI service: status, key, check / save / remove, on-off, move up / down. */
+function aiRows(s: AppState['settings']): string {
+  const order = orderOf(s);
+  return `<div class="ai-svc-list">${order.map((id, i) => {
+    const p = providerInfo(id), key = keyOf(s, id), on = isOn(s, id), r = restingUntil(id);
+    const dot = !key ? 'none' : !on ? 'off' : r ? 'warn' : 'ok';
+    const dotTitle = !key ? 'No key yet' : !on ? 'Switched off' : r ? `Resting until ${new Date(r.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${r.why}` : 'Ready';
+    const st = aiStatus[id];
+    return `<div class="ai-row" data-ai="${id}">
+      <div class="ai-head">
+        <span class="ai-dot ${dot}" title="${esc(dotTitle)}"></span>
+        <strong>${i + 1}. ${esc(p.name)}</strong> ${p.free ? '<span class="pill ok">free</span>' : '<span class="pill warn">paid</span>'}
+        <span class="grow"></span>
+        <button class="btn" data-ai-up="${id}" ${i ? '' : 'disabled'} aria-label="Move ${esc(p.name)} up">↑</button>
+        <button class="btn" data-ai-down="${id}" ${i < order.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(p.name)} down">↓</button>
+        <label class="small"><input type="checkbox" data-ai-on="${id}" ${on ? 'checked' : ''}> On</label>
+      </div>
+      <p class="tiny muted" style="margin:2px 0 6px">${p.signupUrl ? `Key from <a href="${p.signupUrl}" target="_blank" rel="noopener">${esc(p.signup)}</a>` : esc(p.signup)}${p.note ? ` · ${esc(p.note)}` : ''}${r ? ` · <span class="warn-text">resting: ${esc(r.why)}</span>` : ''}</p>
+      <div class="row wrap">
+        <input type="password" class="grow" id="ai-key-${id}" value="${esc(key ?? '')}" autocomplete="off" placeholder="${esc(p.keyless ? p.placeholder + ' (its address)' : p.placeholder)}" aria-label="${esc(p.name)} ${p.keyless ? 'address' : 'API key'}">
+        <button class="btn" data-ai-check="${id}">Check</button>
+        <button class="btn primary" data-ai-save="${id}">Save</button>
+        ${key ? `<button class="btn danger" data-ai-clear="${id}">Remove</button>` : ''}
+        ${r ? `<button class="btn" data-ai-wake="${id}" title="Try it again now">Wake</button>` : ''}
+      </div>
+      ${st ? `<p class="small ${st.ok ? 'ok' : 'bad'}" style="margin:4px 0 0">${esc(st.text)}</p>` : ''}
+    </div>`;
+  }).join('')}</div>`;
+}
+
+/** Saves one service's key (Gemini keeps its old field so older backups and devices still read it). */
+const withKey = (st: AppState, id: ProviderId, key: string | undefined): AppState => id === 'gemini'
+  ? { ...st, settings: { ...st.settings, geminiKey: key, aiKeys: { ...st.settings.aiKeys, gemini: undefined } } }
+  : { ...st, settings: { ...st.settings, aiKeys: { ...st.settings.aiKeys, [id]: key } } };
+/** A copy for backups: no API keys, no sign-in. */
+const noSecrets = (st: AppState) => ({ ...st, auth: undefined, settings: { ...st.settings, geminiKey: undefined, aiKeys: undefined } });
 
 function download(name: string, type: string, body: string) {
   const url = URL.createObjectURL(new Blob([body], { type }));
@@ -115,17 +153,10 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
-      <h2>Free AI check (Google Gemini)</h2>
-      <p class="small muted" style="margin-top:-4px">Optional. On the Upload screen, <strong>AI check</strong> sends a statement's rows to Google Gemini to suggest cleaner payee names and categories and to flag rows that look mixed up. You review every suggestion before anything changes.</p>
-      <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers (account, phone, reference) replaced by # and your name replaced by SELF. Balances and the PDF itself are never sent. On Google's free tier, Google may use what you send to improve its products.</p>
-      <ol class="small muted" style="padding-left:18px;margin:0 0 12px">
-        <li>Open <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a> and sign in with a Google account.</li>
-        <li>Create an API key (free, no card needed) and paste it below.</li>
-      </ol>
-      <label class="field"><span>Gemini API key</span><input type="password" id="gkey" value="${esc(s.geminiKey ?? '')}" autocomplete="off" placeholder="AIza…"></label>
-      <p class="tiny" style="margin-top:-4px">The app picks the best free Gemini model that is working at the moment, so there is nothing else to set.</p>
-      ${geminiStatus ? `<p class="small ${geminiStatus.ok ? 'ok' : 'bad'}">${esc(geminiStatus.text)}</p>` : ''}
-      <div class="row wrap"><button class="btn" id="check-gemini">Check key</button><button class="btn primary" id="save-gemini">Save</button>${s.geminiKey ? '<button class="btn danger" id="clear-gemini">Remove key</button>' : ''}</div>
+      <h2>AI assistants</h2>
+      <p class="small muted" style="margin-top:-4px">Optional, free. Used by <strong>AI check</strong> and the AI statement reader on the Upload screen, and by the Assistant. Add keys for as many services as you like: each request goes to the first one in this order that is switched on and not resting; one that runs out of its free limit rests for 15 minutes (yellow) and the next one answers. You review every suggestion before anything changes.</p>
+      <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers replaced by # and your name by SELF (the statement reader also sends the table's amounts and balances, never your name or account numbers). Free tiers may use what you send to improve their products. Keys are kept on this device (and in your encrypted sync).</p>
+      ${aiRows(s)}
     </div>
 
     ${syncCard()}
@@ -213,40 +244,55 @@ export function renderSettings(root: HTMLElement) {
     await update((st) => ({ ...st, settings: { ...st.settings, planLink: v } }));
     toast(v ? 'Investment plan link saved' : 'Investment plan link removed from the menu');
   });
-  root.querySelector('#check-gemini')!.addEventListener('click', async () => {
-    const key = val('gkey').trim();
-    if (!key) { geminiStatus = { ok: false, text: 'Paste your key first.' }; render(); return; }
-    geminiStatus = { ok: true, text: 'Checking…' };
+  const aiOrderNow = () => orderOf(app.state.settings);
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-up],[data-ai-down]').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = (btn.dataset.aiUp ?? btn.dataset.aiDown) as ProviderId, up = btn.dataset.aiUp != null;
+    const order = aiOrderNow(), i = order.indexOf(id), j = up ? i - 1 : i + 1;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    await update((st) => ({ ...st, settings: { ...st.settings, aiOrder: order } }));
+  }));
+  root.querySelectorAll<HTMLInputElement>('[data-ai-on]').forEach((box) => box.addEventListener('change', async () => {
+    const id = box.dataset.aiOn!;
+    await update((st) => ({ ...st, settings: { ...st.settings, aiOff: box.checked ? (st.settings.aiOff ?? []).filter((x) => x !== id) : [...new Set([...(st.settings.aiOff ?? []), id])] } }));
+  }));
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-check]').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = btn.dataset.aiCheck as ProviderId, key = val(`ai-key-${id}`).trim(), p = providerInfo(id);
+    if (!key) { aiStatus[id] = { ok: false, text: p.keyless ? 'Enter its address first, e.g. http://localhost:11434' : 'Paste your key first.' }; render(); return; }
+    aiStatus[id] = { ok: true, text: 'Checking…' };
     render();
     try {
-      const { listGeminiModels } = await import('../categorize/gemini');
-      await listGeminiModels(key);
-      geminiStatus = { ok: true, text: '✓ Key works and is saved on this device.' };
-      // Keep the key in the box after the screen redraws.
-      await update((st) => ({ ...st, settings: { ...st.settings, geminiKey: key } }));
+      const models = await listModels(id, key);
+      aiStatus[id] = { ok: true, text: `✓ Works (${models.length} model${models.length === 1 ? '' : 's'} available) and is saved on this device.` };
+      wake(id);
+      await update((st) => withKey(st, id, key));
     } catch (e) {
-      geminiStatus = { ok: false, text: (e as Error).message };
+      aiStatus[id] = { ok: false, text: (e as Error).message };
       render();
     }
-  });
-  root.querySelector('#save-gemini')!.addEventListener('click', async () => {
-    const geminiKey = val('gkey').trim() || undefined;
-    await update((st) => ({ ...st, settings: { ...st.settings, geminiKey } }));
-    toast(geminiKey ? 'Gemini key saved on this device' : 'Saved');
-  });
-  root.querySelector('#clear-gemini')?.addEventListener('click', async () => {
-    await update((st) => ({ ...st, settings: { ...st.settings, geminiKey: undefined } }));
-    toast('Gemini key removed');
-  });
+  }));
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-save]').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = btn.dataset.aiSave as ProviderId, key = val(`ai-key-${id}`).trim() || undefined;
+    await update((st) => withKey(st, id, key));
+    toast(key ? `${providerInfo(id).name} key saved on this device` : 'Saved');
+  }));
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-clear]').forEach((btn) => btn.addEventListener('click', async () => {
+    const id = btn.dataset.aiClear as ProviderId;
+    delete aiStatus[id];
+    await update((st) => withKey(st, id, undefined));
+    toast(`${providerInfo(id).name} key removed`);
+  }));
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-wake]').forEach((btn) => btn.addEventListener('click', () => { wake(btn.dataset.aiWake as ProviderId); render(); }));
   root.querySelector('#export')!.addEventListener('click', () => {
-    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify({ ...app.state, auth: undefined, settings: { ...app.state.settings, geminiKey: undefined } }));
+    download(`expenses-backup-${new Date().toISOString().slice(0, 10)}.json`, 'application/json', JSON.stringify(noSecrets(app.state)));
   });
   const restoreFrom = async (textData: string) => {
     try {
       const data = JSON.parse(textData) as AppState;
       if (!Array.isArray(data.txns) || !Array.isArray(data.accounts)) throw new Error('Not a backup file');
       if (!(await askConfirm(`Replace current data with ${data.txns.length} transactions from the backup?`, 'Restore', false))) return;
-      await update((st) => ({ ...migrate(data), auth: st.auth, settings: { ...migrate(data).settings, geminiKey: st.settings.geminiKey } }));
+      await update((st) => ({ ...migrate(data), auth: st.auth,
+        settings: { ...migrate(data).settings, geminiKey: st.settings.geminiKey, aiKeys: st.settings.aiKeys, aiOrder: st.settings.aiOrder, aiOff: st.settings.aiOff } }));
       toast('Backup restored');
     } catch (err) {
       toast(`Could not restore: ${(err as Error).message}`);
@@ -257,7 +303,7 @@ export function renderSettings(root: HTMLElement) {
     if (file) await restoreFrom(await file.text());
   });
   root.querySelector('#copy-backup')!.addEventListener('click', async () => {
-    const json = JSON.stringify({ ...app.state, auth: undefined, settings: { ...app.state.settings, geminiKey: undefined } });
+    const json = JSON.stringify(noSecrets(app.state));
     try {
       await navigator.clipboard.writeText(json);
       toast('Backup copied. Paste it into Notes or a file to keep it.');

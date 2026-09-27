@@ -77,6 +77,6 @@ describe('checkWithGemini', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('quota', { status: 429 })));
     const settings = { ...emptyState().settings, geminiKey: 'k' };
     await expect(checkWithGemini([txn({})], settings)).rejects.toThrow(/limit/);
-    await expect(checkWithGemini([txn({})], emptyState().settings)).rejects.toThrow(/API key in Settings/);
+    await expect(checkWithGemini([txn({})], emptyState().settings)).rejects.toThrow(/AI key in Settings/);
   });
 });
