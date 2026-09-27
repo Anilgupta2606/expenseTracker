@@ -15,6 +15,10 @@ import { isOn, keyOf, knownModels, listModels, orderOf, pinnedModel, providerInf
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
+/** Whether the Learned rules table is open: remembered on this device, folded by default. */
+const RULES_OPEN = 'et-rules-open';
+const rulesOpen = () => { try { return localStorage.getItem(RULES_OPEN) === '1'; } catch { return false; } };
+const setRulesOpen = (v: boolean) => { try { localStorage.setItem(RULES_OPEN, v ? '1' : '0'); } catch { /* storage blocked */ } };
 /** Which service rows are open (the rest show one summary line). Kept while the app is open. */
 const aiOpen = new Set<string>();
 /** One row per AI service: a summary line that opens into key, check / save / remove and model. */
@@ -154,12 +158,15 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
-      <h2>Learned rules</h2>
+      <h2 class="fold-h"><button class="fold-toggle" id="rules-toggle" aria-expanded="${rulesOpen()}" aria-controls="rules-body">
+        <span class="ai-chev" aria-hidden="true">▸</span> Learned rules <span class="muted small">(${state.rules.length})</span></button></h2>
+      <div id="rules-body" ${rulesOpen() ? '' : 'hidden'}>
       <p class="small muted" style="margin-top:-4px">Created when you change a category and keep "Always use this" ticked.</p>
       ${state.rules.length ? `<table class="simple">
         ${state.rules.map((r, i) => `<tr><td>${esc(r.key)}${r.direction ? ` <span class="tiny">(${r.direction === 'debit' ? 'paid' : 'received'})</span>` : ''}</td><td>${esc(r.category)}</td>
           <td style="text-align:right"><button class="btn" data-del-rule="${i}" aria-label="Delete rule">✕</button></td></tr>`).join('')}
       </table>` : '<p class="muted small">None yet.</p>'}
+      </div>
       <button class="btn" id="recat" style="margin-top:10px">Re-run categorisation</button>
     </div>
 
@@ -231,6 +238,7 @@ export function renderSettings(root: HTMLElement) {
     await update((st) => recategorizeAll({ ...st, settings: { ...st.settings, ownNames: splitNames(val('own')), familyNames: splitNames(val('family')) } }));
     toast('Saved');
   });
+  root.querySelector('#rules-toggle')!.addEventListener('click', () => { setRulesOpen(!rulesOpen()); render(); });
   root.querySelector('#recat')!.addEventListener('click', async () => {
     await update(recategorizeAll);
     toast('Re-categorised');
