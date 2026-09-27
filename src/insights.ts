@@ -263,3 +263,57 @@ export function subscriptions(txns: Txn[], marks: Record<string, { mark: 'keep' 
   }
   return out.sort((a, b) => Number(!!b.chargedAfterCancel) - Number(!!a.chargedAfterCancel) || b.yearly - a.yearly);
 }
+
+/* ------------------------------------------------------------------ unusual spend alerts */
+
+export interface SpendAlert {
+  /** Stable for the month, so a dismissed alert stays dismissed. */
+  id: string;
+  kind: 'month' | 'category' | 'payee';
+  text: string;
+  detail: string;
+  /** Rows to open in Transactions. */
+  ids: string[];
+  category?: string;
+}
+
+/**
+ * What stands out in a month against the six before it: the month's spending, a category,
+ * or a single payment. Months with no spending are left out of the averages, and small
+ * amounts never alert.
+ */
+export function spendAlerts(txns: Txn[], month: string, dismissed: string[] = []): SpendAlert[] {
+  const spend = txns.filter(isSpend);
+  const past: string[] = [];
+  for (let m = prevMonth(month), i = 0; i < 6; m = prevMonth(m), i++) if (spend.some((t) => t.date.startsWith(m))) past.push(m);
+  const out: SpendAlert[] = [];
+  const now = spend.filter((t) => t.date.startsWith(month));
+  const fmt = (n: number) => `₹${Math.round(n).toLocaleString('en-IN')}`;
+  const x = (a: number, b: number) => `${(a / b).toFixed(1).replace(/\.0$/, '')}×`;
+  if (past.length >= 2 && now.length) {
+    const total = now.reduce((a, t) => a + t.amount, 0);
+    const avg = spend.filter((t) => past.some((m) => t.date.startsWith(m))).reduce((a, t) => a + t.amount, 0) / past.length;
+    if (total >= 1.3 * avg && total - avg >= 5000) {
+      out.push({ id: `${month}:month`, kind: 'month', text: `Spending is ${x(total, avg)} your ${past.length}-month average`,
+        detail: `${fmt(total)} so far against about ${fmt(avg)} a month`, ids: now.map((t) => t.id) });
+    }
+    const by = (list: Txn[]) => { const r = new Map<string, number>(); for (const t of list) r.set(t.category, (r.get(t.category) ?? 0) + t.amount); return r; };
+    const cur = by(now);
+    const hist = by(spend.filter((t) => past.some((m) => t.date.startsWith(m))));
+    for (const [cat, n] of cur) {
+      const usual = (hist.get(cat) ?? 0) / past.length;
+      if (usual > 0 ? n >= 2 * usual && n - usual >= 2000 : n >= 5000) {
+        out.push({ id: `${month}:cat:${cat}`, kind: 'category', category: cat,
+          text: usual > 0 ? `${cat} is ${x(n, usual)} your ${past.length}-month average` : `${cat}: ${fmt(n)}, new this month`,
+          detail: usual > 0 ? `${fmt(n)} against about ${fmt(usual)} a month` : `Nothing in ${cat} in the ${past.length} months before`,
+          ids: now.filter((t) => t.category === cat).map((t) => t.id) });
+      }
+    }
+  }
+  for (const u of unusualSpends(txns, month, 5)) {
+    out.push({ id: `${month}:txn:${u.txn.id}`, kind: 'payee', text: `${u.txn.merchantName}: ${fmt(u.txn.amount)}`,
+      detail: u.reason === 'New payee' ? 'A large first payment to someone new' : u.reason, ids: [u.txn.id] });
+  }
+  const skip = new Set(dismissed);
+  return out.filter((a) => !skip.has(a.id));
+}

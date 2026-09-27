@@ -3,7 +3,7 @@ import { currentMonth, summarize, summarizeAll, type MonthSummary } from '../pla
 import { app, navigate, render, toast, update } from './app';
 import { buildLedgerExport } from '../ledgerExport';
 import { categoryCounted } from '../categorize/categories';
-import { categoryShifts, pairKey, recurringPayments, subscriptions, unpairedTransfers, unusualSpends, type UnpairedTransfer } from '../insights';
+import { categoryShifts, pairKey, recurringPayments, spendAlerts, subscriptions, unpairedTransfers, unusualSpends, type SpendAlert, type UnpairedTransfer } from '../insights';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
 import { applyFilters, dayLabel, esc, inr, inrFull, kindVar, monthLabel, monthShort } from './format';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
@@ -188,6 +188,36 @@ function recurringPanel(txns: Txn[]): string {
       <span class="grow"><span class="mv-label">${esc(r.name)}</span><span class="tiny">${esc(r.category)} · around the ${ordinal(r.day)} · ${r.months} months</span></span>
       <span class="rec-side"><span class="num">${inr(r.amount)}</span>${badge[r.status]}</span></a></li>`).join('')}</ul>`,
   { note: `About ${inr(total)} a month in ${list.length} regular payment${list.length === 1 ? '' : 's'}${missing ? `; <strong class="bad">${missing} not seen</strong> yet in ${esc(monthLabel(asOf.slice(0, 7)))}` : ''}. Statements up to ${esc(dayLabel(asOf))}.` });
+}
+
+/** Unusual spending in the month: open each one, or dismiss it for good. */
+function openAlertsSheet(month: string, alerts: SpendAlert[]) {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'sheet-backdrop';
+  const draw = (list: SpendAlert[]) => {
+    backdrop.innerHTML = `<div class="sheet" role="dialog" aria-label="Unusual spending"><div class="grab"></div>
+      <h2>Unusual spending, ${esc(monthLabel(month))}</h2>
+      <p class="small muted" style="margin-top:-4px">Against the months before. Open one to see its transactions; dismiss it if it was expected.</p>
+      ${list.length ? list.map((a, i) => `<div class="pair-card">
+        <strong>${esc(a.text)}</strong><div class="small muted">${esc(a.detail)}</div>
+        <div class="row" style="margin-top:8px;gap:8px"><button class="btn grow small-btn" data-alert-dismiss="${i}">Expected — dismiss</button><button class="btn primary grow small-btn" data-alert-open="${i}">Open</button></div>
+      </div>`).join('') : '<p class="small ok">Nothing unusual left.</p>'}
+      <button class="btn grow" data-close style="margin-top:10px;width:100%">Done</button></div>`;
+    backdrop.querySelector('[data-close]')!.addEventListener('click', () => backdrop.remove());
+    backdrop.querySelectorAll<HTMLElement>('[data-alert-open]').forEach((b) => b.addEventListener('click', () => {
+      const a = list[Number(b.dataset.alertOpen)];
+      backdrop.remove();
+      openPicked(a.text, a.ids);
+    }));
+    backdrop.querySelectorAll<HTMLElement>('[data-alert-dismiss]').forEach((b) => b.addEventListener('click', async () => {
+      const a = list[Number(b.dataset.alertDismiss)];
+      await update((st) => ({ ...st, settings: { ...st.settings, dismissedAlerts: [...(st.settings.dismissedAlerts ?? []), a.id].slice(-300) } }));
+      draw(list.filter((x) => x !== a));
+    }));
+  };
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) backdrop.remove(); });
+  draw(alerts);
+  document.body.append(backdrop);
 }
 
 /** Subscriptions and service bills: what each costs a year, when it is next due, and your keep / cancel choice. */
@@ -394,6 +424,9 @@ export function renderDashboard(root: HTMLElement) {
   const of = (k: Kind, dir: 'debit' | 'credit') => txns.filter((t) => t.kind === k && t.direction === dir && !t.excluded);
   const review = txns.filter((t) => t.category === 'Uncategorised');
   const unpaired = unpairedTransfers(state.txns, state.settings.notPairs);
+  // alerts for the month on screen ("All time": the latest month)
+  const alertMonth = all ? months[0] : month;
+  const alerts = spendAlerts(scoped, alertMonth, state.settings.dismissedAlerts ?? []);
   // Card bill payments count as spending; they appear as their own category.
   const spendCats = [
     ...byCategory(of('spend', 'debit')).map((c) => ({ ...c, kind: 'spend' as Kind })),
@@ -435,6 +468,8 @@ export function renderDashboard(root: HTMLElement) {
     ${review.length ? `<a class="banner" href="#txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
 
     ${unpaired.length ? `<button class="banner" data-pairs style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${unpaired.length}</strong> possible self transfer${unpaired.length > 1 ? 's' : ''} between your accounts ${unpaired.length > 1 ? 'aren’t' : 'isn’t'} marked</span><span>Review ›</span></button>` : ''}
+
+    ${alerts.length ? `<button class="banner alert-banner" data-alerts style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${alerts.length}</strong> unusual spend${alerts.length > 1 ? 's' : ''} in ${esc(monthLabel(alertMonth))}: ${esc(alerts[0].text)}${alerts.length > 1 ? ` and ${alerts.length - 1} more` : ''}</span><span>Review ›</span></button>` : ''}
 
     ${kpis(s)}
 
@@ -480,6 +515,7 @@ export function renderDashboard(root: HTMLElement) {
   }));
   root.querySelector('[data-ledger-copy]')?.addEventListener('click', () => void copyForLedger());
   root.querySelector('[data-pairs]')?.addEventListener('click', () => openPairsSheet(unpaired));
+  root.querySelector('[data-alerts]')?.addEventListener('click', () => openAlertsSheet(alertMonth, alerts));
   root.querySelector<HTMLElement>('[data-open-odd]')?.addEventListener('click', (e) => openPicked(`Stand-out payments, ${monthShort(month)}`, (e.currentTarget as HTMLElement).dataset.openOdd!.split(',')));
   root.querySelectorAll<HTMLElement>('[data-recurring]').forEach((el) => el.addEventListener('click', (e) => {
     e.preventDefault();

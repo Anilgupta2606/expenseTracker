@@ -107,6 +107,8 @@ export interface Settings {
   notPairs?: string[];
   /** What you decided about each subscription (by payee key), and when. */
   subscriptionMarks?: Record<string, { mark: 'keep' | 'cancel'; at: string }>;
+  /** Unusual-spend alerts you dismissed (their ids). */
+  dismissedAlerts?: string[];
 }
 
 /** Your own numbers for a month. Months without one inherit the latest earlier month. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { categoryShifts, pairKey, recurringPayments, subscriptions, unpairedTransfers, unusualSpends } from '../src/insights';
+import { categoryShifts, pairKey, recurringPayments, spendAlerts, subscriptions, unpairedTransfers, unusualSpends } from '../src/insights';
 import type { Txn } from '../src/types';
 
 let n = 0;
@@ -97,5 +97,29 @@ describe('subscriptions', () => {
   it('the next due date keeps to the end of a short month', () => {
     const s = subscriptions(['2026-05-31', '2026-06-30', '2026-07-31', '2026-08-31'].map((d) => pay('x', 'Spotify', 'Subscriptions', d, 119)), {}, '2026-09-05');
     expect(s[0].nextDue).toBe('2026-09-30');
+  });
+});
+
+describe('unusual spend alerts', () => {
+  const months = ['2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07'];
+  const base = months.flatMap((m) => [
+    t({ date: `${m}-05`, amount: 5000, category: 'Shopping', merchantKey: 'amz', merchantName: 'Amazon' }),
+    t({ date: `${m}-10`, amount: 20000, category: 'Food & Dining', merchantKey: 'swg', merchantName: 'Swiggy' }),
+  ]);
+  it('flags a category far above its average, and the month when the total is too', () => {
+    const rows = [...base, t({ date: '2026-08-05', amount: 12000, category: 'Shopping', merchantKey: 'amz', merchantName: 'Amazon' }),
+      t({ date: '2026-08-10', amount: 21000, category: 'Food & Dining', merchantKey: 'swg', merchantName: 'Swiggy' })];
+    const a = spendAlerts(rows, '2026-08');
+    expect(a.map((x) => x.text)).toEqual(['Spending is 1.3× your 6-month average', 'Shopping is 2.4× your 6-month average', 'Amazon: ₹12,000']);
+    const b = spendAlerts([...rows, t({ date: '2026-08-20', amount: 9000, category: 'Travel', merchantKey: 'irctc', merchantName: 'IRCTC' })], '2026-08');
+    expect(b.map((x) => x.kind)).toEqual(['month', 'category', 'category', 'payee']);
+    expect(b[0].text).toBe('Spending is 1.7× your 6-month average');
+    expect(b.find((x) => x.category === 'Travel')!.text).toBe('Travel: ₹9,000, new this month');
+  });
+  it('stays quiet for normal months and small amounts, and forgets dismissed ones', () => {
+    expect(spendAlerts([...base, t({ date: '2026-08-05', amount: 5200, category: 'Shopping', merchantKey: 'amz' })], '2026-08')).toEqual([]);
+    const rows = [...base, t({ date: '2026-08-05', amount: 12000, category: 'Shopping', merchantKey: 'amz', merchantName: 'Amazon' })];
+    const ids = spendAlerts(rows, '2026-08').map((x) => x.id);
+    expect(spendAlerts(rows, '2026-08', ids)).toEqual([]);
   });
 });
