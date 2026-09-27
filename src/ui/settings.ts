@@ -11,36 +11,54 @@ import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
 import { esc, kindVar } from './format';
 import { DEFAULT_PLAN_LINK } from '../links';
-import { PROVIDERS, isOn, keyOf, listModels, orderOf, providerInfo, restingUntil, wake, type ProviderId } from '../ai/providers';
+import { isOn, keyOf, knownModels, listModels, orderOf, pinnedModel, providerInfo, rankModels, rememberModels, restingUntil, wake, type ProviderId } from '../ai/providers';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
-/** One row per AI service: status, key, check / save / remove, on-off, move up / down. */
+/** Which service rows are open (the rest show one summary line). Kept while the app is open. */
+const aiOpen = new Set<string>();
+/** One row per AI service: a summary line that opens into key, check / save / remove and model. */
 function aiRows(s: AppState['settings']): string {
   const order = orderOf(s);
-  return `<div class="ai-svc-list">${order.map((id, i) => {
-    const p = providerInfo(id), key = keyOf(s, id), on = isOn(s, id), r = restingUntil(id);
+  const hm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `<div class="ai-tools"><button class="link-btn" data-ai-all="open">Expand all</button> · <button class="link-btn" data-ai-all="close">Collapse all</button></div>
+  <div class="ai-svc-list">${order.map((id, i) => {
+    const p = providerInfo(id), key = keyOf(s, id), on = isOn(s, id), r = restingUntil(id), open = aiOpen.has(id);
+    const models = knownModels(id, key), pin = pinnedModel(s, id), best = models[0];
     const dot = !key ? 'none' : !on ? 'off' : r ? 'warn' : 'ok';
-    const dotTitle = !key ? 'No key yet' : !on ? 'Switched off' : r ? `Resting until ${new Date(r.until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${r.why}` : 'Ready';
+    const uses = pin ? `uses ${pin} (pinned)` : best ? `uses ${best}` : key ? 'best model picked on first use' : '';
+    const summary = !key ? (p.keyless ? 'not set up' : 'no key') : !on ? 'switched off' : r ? `resting until ${hm(r.until)}` : `ready · ${uses}`;
     const st = aiStatus[id];
-    return `<div class="ai-row" data-ai="${id}">
+    return `<div class="ai-row ${open ? 'open' : ''}" data-ai="${id}">
       <div class="ai-head">
-        <span class="ai-dot ${dot}" title="${esc(dotTitle)}"></span>
-        <strong>${i + 1}. ${esc(p.name)}</strong> ${p.free ? '<span class="pill ok">free</span>' : '<span class="pill warn">paid</span>'}
-        <span class="grow"></span>
+        <button class="ai-toggle" data-ai-toggle="${id}" aria-expanded="${open}" aria-controls="ai-body-${id}">
+          <span class="ai-chev" aria-hidden="true">▸</span>
+          <span class="ai-dot ${dot}"></span>
+          <strong>${i + 1}. ${esc(p.name)}</strong>
+          ${p.free ? '<span class="pill ok">free</span>' : '<span class="pill warn">paid</span>'}
+          <span class="ai-sum">${esc(summary)}</span>
+        </button>
         <button class="btn" data-ai-up="${id}" ${i ? '' : 'disabled'} aria-label="Move ${esc(p.name)} up">↑</button>
         <button class="btn" data-ai-down="${id}" ${i < order.length - 1 ? '' : 'disabled'} aria-label="Move ${esc(p.name)} down">↓</button>
         <label class="small"><input type="checkbox" data-ai-on="${id}" ${on ? 'checked' : ''}> On</label>
       </div>
-      <p class="tiny muted" style="margin:2px 0 6px">${p.signupUrl ? `Key from <a href="${p.signupUrl}" target="_blank" rel="noopener">${esc(p.signup)}</a>` : esc(p.signup)}${p.note ? ` · ${esc(p.note)}` : ''}${r ? ` · <span class="warn-text">resting: ${esc(r.why)}</span>` : ''}</p>
-      <div class="row wrap">
-        <input type="password" class="grow" id="ai-key-${id}" value="${esc(key ?? '')}" autocomplete="off" placeholder="${esc(p.keyless ? p.placeholder + ' (its address)' : p.placeholder)}" aria-label="${esc(p.name)} ${p.keyless ? 'address' : 'API key'}">
-        <button class="btn" data-ai-check="${id}">Check</button>
-        <button class="btn primary" data-ai-save="${id}">Save</button>
-        ${key ? `<button class="btn danger" data-ai-clear="${id}">Remove</button>` : ''}
-        ${r ? `<button class="btn" data-ai-wake="${id}" title="Try it again now">Wake</button>` : ''}
+      <div class="ai-body" id="ai-body-${id}" ${open ? '' : 'hidden'}>
+        <p class="tiny muted" style="margin:2px 0 6px">${p.signupUrl ? `Key from <a href="${p.signupUrl}" target="_blank" rel="noopener">${esc(p.signup)}</a>` : esc(p.signup)}${p.note ? ` · ${esc(p.note)}` : ''}${r ? ` · <span class="warn-text">resting: ${esc(r.why)}</span>` : ''}</p>
+        <div class="row wrap">
+          <input type="password" class="grow" id="ai-key-${id}" value="${esc(key ?? '')}" autocomplete="off" placeholder="${esc(p.keyless ? p.placeholder + ' (its address)' : p.placeholder)}" aria-label="${esc(p.name)} ${p.keyless ? 'address' : 'API key'}">
+          <button class="btn" data-ai-check="${id}">Check</button>
+          <button class="btn primary" data-ai-save="${id}">Save</button>
+          ${key ? `<button class="btn danger" data-ai-clear="${id}">Remove</button>` : ''}
+          ${r ? `<button class="btn" data-ai-wake="${id}" title="Try it again now">Wake</button>` : ''}
+        </div>
+        ${key ? `<label class="field" style="margin-top:8px"><span>Model</span>
+          <select id="ai-model-${id}" data-ai-model="${id}">
+            <option value="auto" ${pin ? '' : 'selected'}>Auto — the best available${best ? ` (now ${esc(best)})` : ''}</option>
+            ${[...new Set([...(pin ? [pin] : []), ...models])].map((m) => `<option value="${esc(m)}" ${m === pin ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+          </select></label>
+          <p class="tiny muted" style="margin:2px 0 0">${models.length ? `${models.length} usable model${models.length === 1 ? '' : 's'}, best first. Auto moves down this list when one is busy or out of quota.` : 'Press Check to load the models this key can use.'}</p>` : ''}
+        ${st ? `<p class="small ${st.ok ? 'ok' : 'bad'}" style="margin:4px 0 0">${esc(st.text)}</p>` : ''}
       </div>
-      ${st ? `<p class="small ${st.ok ? 'ok' : 'bad'}" style="margin:4px 0 0">${esc(st.text)}</p>` : ''}
     </div>`;
   }).join('')}</div>`;
 }
@@ -258,12 +276,14 @@ export function renderSettings(root: HTMLElement) {
   }));
   root.querySelectorAll<HTMLButtonElement>('[data-ai-check]').forEach((btn) => btn.addEventListener('click', async () => {
     const id = btn.dataset.aiCheck as ProviderId, key = val(`ai-key-${id}`).trim(), p = providerInfo(id);
+    aiOpen.add(id);
     if (!key) { aiStatus[id] = { ok: false, text: p.keyless ? 'Enter its address first, e.g. http://localhost:11434' : 'Paste your key first.' }; render(); return; }
     aiStatus[id] = { ok: true, text: 'Checking…' };
     render();
     try {
-      const models = await listModels(id, key);
-      aiStatus[id] = { ok: true, text: `✓ Works (${models.length} model${models.length === 1 ? '' : 's'} available) and is saved on this device.` };
+      const models = rankModels(id, await listModels(id, key));
+      rememberModels(id, key, models);
+      aiStatus[id] = { ok: true, text: models.length ? `✓ Works and is saved on this device. Best model: ${models[0]} (${models.length} usable).` : '✓ Key works and is saved, but none of its models can read statements.' };
       wake(id);
       await update((st) => withKey(st, id, key));
     } catch (e) {
@@ -281,6 +301,20 @@ export function renderSettings(root: HTMLElement) {
     delete aiStatus[id];
     await update((st) => withKey(st, id, undefined));
     toast(`${providerInfo(id).name} key removed`);
+  }));
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-toggle]').forEach((btn) => btn.addEventListener('click', () => {
+    const id = btn.dataset.aiToggle!;
+    if (aiOpen.has(id)) aiOpen.delete(id); else aiOpen.add(id);
+    render();
+  }));
+  root.querySelectorAll<HTMLButtonElement>('[data-ai-all]').forEach((btn) => btn.addEventListener('click', () => {
+    if (btn.dataset.aiAll === 'open') orderOf(app.state.settings).forEach((id) => aiOpen.add(id)); else aiOpen.clear();
+    render();
+  }));
+  root.querySelectorAll<HTMLSelectElement>('[data-ai-model]').forEach((sel) => sel.addEventListener('change', async () => {
+    const id = sel.dataset.aiModel!;
+    await update((st) => ({ ...st, settings: { ...st.settings, aiModel: { ...st.settings.aiModel, [id]: sel.value === 'auto' ? undefined : sel.value } } }));
+    toast(sel.value === 'auto' ? `${providerInfo(id as ProviderId).name}: the best available model` : `${providerInfo(id as ProviderId).name}: always ${sel.value}`);
   }));
   root.querySelectorAll<HTMLButtonElement>('[data-ai-wake]').forEach((btn) => btn.addEventListener('click', () => { wake(btn.dataset.aiWake as ProviderId); render(); }));
   root.querySelector('#export')!.addEventListener('click', () => {

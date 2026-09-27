@@ -24,8 +24,9 @@ describe('checkWithGemini', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('turns Gemini answers into suggestions and drops invalid ones', async () => {
-    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
-      const body = JSON.parse(String(init.body));
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/models?')) return new Response(JSON.stringify({ models: [] }), { status: 200 });   // the key's model list
+      const body = JSON.parse(String(init!.body));
       expect(body.contents[0].parts[0].text).not.toContain('621000000002');
       const rows = [
         { i: 0, payee: 'DSB Hospitality', kind: 'spend', category: 'Food & Dining', mixed: true, note: 'label says DLF Mall' },
@@ -37,10 +38,10 @@ describe('checkWithGemini', () => {
     const settings = { ...emptyState().settings, ownNames: ['RAVI KUMAR'], geminiKey: 'test-key' };
     const out = await checkWithGemini([txn({}), txn({ id: 't2' })], settings);
     expect(out).toEqual([{ id: 't1', payee: 'DSB Hospitality', kind: 'spend', category: 'Food & Dining', mixed: true, note: 'label says DLF Mall' }]);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('gemini-flash-latest:generateContent');
+    expect(fetchMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes(':generateContent'))).toContain('gemini-flash-latest:generateContent');
   });
 
-  it('finds another Flash model if Google retires both aliases', async () => {
+  it('uses the best Flash the key lists (newest stable Flash first)', async () => {
     const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       urls.push(url);
@@ -52,12 +53,13 @@ describe('checkWithGemini', () => {
     }));
     await checkWithGemini([txn({})], { ...emptyState().settings, geminiKey: 'k' }, undefined, 0);
     expect(urls.filter((u) => u.includes(':generateContent')).map((u) => u.split('/models/')[1].split(':')[0]))
-      .toEqual(['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-9-flash']);
+      .toEqual(['gemini-9-flash']);
   });
 
   it('retries a busy model once, then moves to Flash-Lite and stays there', async () => {
     const urls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/models?')) return new Response('list not available', { status: 500 });   // falls back to the built-in list
       urls.push(url);
       if (url.includes('gemini-flash-latest:')) return new Response('high demand', { status: 503 });
       return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify({ rows: [] }) }] } }] }), { status: 200 });

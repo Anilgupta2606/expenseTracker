@@ -57,9 +57,10 @@ describe('falling back to the next service', () => {
 
   it('asks again without the JSON switch when a model refuses it', async () => {
     let calls = 0;
-    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/models')) return new Response(JSON.stringify({ data: [] }), { status: 200 });
       calls++;
-      const body = JSON.parse(String(init.body));
+      const body = JSON.parse(String(init!.body));
       return body.response_format ? new Response('response_format json_object not supported', { status: 400 }) : oaiOk('{"rows":[1]}');
     }));
     expect(await new AiSession(settings({ aiKeys: { openrouter: 'o' } }), 0).generate('p', SCHEMA)).toEqual({ rows: [1] });
@@ -77,5 +78,44 @@ describe('falling back to the next service', () => {
     const s = new AiSession(settings({ geminiKey: 'g', aiKeys: { groq: 'q' } }), 0);
     expect(await s.generate('p', SCHEMA)).toEqual({ rows: [3] });
     expect(s.last).toEqual({ provider: 'gemini', model: 'gemini-flash-latest' });
+  });
+});
+
+describe('picking the best model', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('Gemini: newest stable Flash first, previews and Pro later, never audio or embedding models', async () => {
+    const { rankModels } = await import('../src/ai/providers');
+    const got = rankModels('gemini', ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash',
+      'gemini-3-flash-preview', 'gemini-2.5-pro', 'gemini-pro-latest', 'gemini-2.5-flash-preview-tts', 'text-embedding-004', 'gemini-flash-lite-latest']);
+    expect(got[0]).toBe('gemini-3.8-flash');
+    expect(got.indexOf('gemini-3.8-flash')).toBeLessThan(got.indexOf('gemini-2.5-flash'));
+    expect(got.indexOf('gemini-2.5-flash')).toBeLessThan(got.indexOf('gemini-2.5-pro'));
+    expect(got.indexOf('gemini-3-flash-preview')).toBeGreaterThan(got.indexOf('gemini-2.5-pro'));
+    expect(got).not.toContain('gemini-2.5-flash-preview-tts');
+    expect(got).not.toContain('text-embedding-004');
+  });
+  it('Groq / OpenRouter: strongest general model first; OpenRouter free models only', async () => {
+    const { rankModels } = await import('../src/ai/providers');
+    expect(rankModels('groq', ['llama-3.1-8b-instant', 'whisper-large-v3', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'meta-llama/llama-guard-4-12b'])
+      .slice(0, 3)).toEqual(['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b']);
+    const or = rankModels('openrouter', ['openai/gpt-4o', 'meta-llama/llama-3.3-70b-instruct:free', 'openrouter/free', 'qwen/qwen3-235b-a22b:free', 'mistralai/mistral-small-3.2-24b-instruct:free']);
+    expect(or[0]).toBe('qwen/qwen3-235b-a22b:free');
+    expect(or).not.toContain('openai/gpt-4o');
+    expect(or).toContain('openrouter/free');
+  });
+  it('Ollama: the smallest model first on a laptop', async () => {
+    const { rankModels } = await import('../src/ai/providers');
+    expect(rankModels('ollama', ['qwen3:8b', 'gemma3:4b', 'qwen3:4b', 'nomic-embed-text'])[0]).toMatch(/:4b$/);
+  });
+  it('a session asks for the key\'s models and uses the best one', async () => {
+    const hit: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'llama-3.1-8b-instant' }, { id: 'openai/gpt-oss-120b' }] }), { status: 200 });
+      return oaiOk('{"rows":[4]}');
+    }));
+    const s = new AiSession(settings({ aiKeys: { groq: 'q-best' } }), 0);
+    expect(await s.generate('p', SCHEMA)).toEqual({ rows: [4] });
+    expect(s.last).toEqual({ provider: 'groq', model: 'openai/gpt-oss-120b' });
+    void hit;
   });
 });

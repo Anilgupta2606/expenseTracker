@@ -433,3 +433,13 @@ body.dropping::after { content: 'Drop statements to read them'; position: fixed;
 .ai-dot.warn { background: var(--warn); opacity: 1; }
 .ai-dot.off { background: var(--text-2); opacity: .6; }
 .warn-text { color: var(--warn); }
+
+.ai-tools { font-size: 13px; margin: -2px 0 8px; color: var(--text-3); }
+.ai-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: none; border: 0; padding: 4px 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.ai-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.ai-chev { display: inline-block; width: 12px; color: var(--text-3); transition: transform .15s; }
+.ai-row.open .ai-chev { transform: rotate(90deg); }
+.ai-sum { font-size: 12.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ai-row { padding: 6px 12px; }
+.ai-body { padding: 4px 0 6px 20px; }
+@media (prefers-reduced-motion: reduce) { .ai-chev { transition: none; } }
