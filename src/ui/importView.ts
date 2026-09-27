@@ -4,7 +4,7 @@ import { applyRescan, buildPreview, commitPreview, deleteImport, diffRescan, par
 import { PasswordNeededError } from '../parse/errors';
 import { deleteFile, loadFile, requestPersistence, saveFile, type StoredFile } from '../store';
 import { app, askConfirm, navigate, render, toast, update } from './app';
-import { dayLabel, esc, inr, kindVar } from './format';
+import { dayLabel, esc, inr, kindVar, accountLabel } from './format';
 import { txnRow } from './transactions';
 
 interface Pending { file: File; preview?: ImportPreview; error?: string; needsPassword?: boolean; wrongPassword?: boolean }
@@ -79,7 +79,7 @@ function previewCard(p: Pending, i: number): string {
   const hasBalance = result.txns.some((t) => t.balance != null);
 
   return `<div class="card">
-    <div class="row between"><h2 class="ellipsis" style="margin:0">${esc(account.bank)} ••${esc(account.number.slice(-4))}</h2>
+    <div class="row between"><h2 class="ellipsis" style="margin:0">${esc(accountLabel(account))}</h2>
       <button class="btn" data-remove="${i}" aria-label="Discard">✕</button></div>
     <p class="small muted" style="margin:4px 0 10px">${esc(p.file.name)}<br>${esc(dates[0])} to ${esc(dates[dates.length - 1])}${account.holderName ? ` · ${esc(account.holderName)}` : ''}</p>
     <table class="simple">
@@ -235,7 +235,7 @@ function uploadedList(): string {
       return `<div class="upload-row">
         <div class="grow">
           <div class="name ellipsis">${esc(r.fileName)}</div>
-          <div class="meta">${esc(acc ? `${acc.bank} ••${acc.number.slice(-4)}` : r.accountId)} · ${esc(r.from)} to ${esc(r.to)} · ${n} rows</div>
+          <div class="meta">${esc(acc ? accountLabel(acc) : r.accountId)} · ${esc(r.from)} to ${esc(r.to)} · ${n} rows</div>
           <div class="meta">Uploaded ${esc(dayLabel(new Date(r.importedAt).toISOString().slice(0, 10)))}${r.rescannedAt ? ` · rescanned ${esc(dayLabel(new Date(r.rescannedAt).toISOString().slice(0, 10)))}` : ''}</div>
           ${check || readerPill(r) ? `<div class="row wrap" style="margin-top:6px;gap:6px">${check}${readerPill(r)}</div>` : ''}
         </div>

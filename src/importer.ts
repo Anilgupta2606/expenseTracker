@@ -1,5 +1,6 @@
 import type { Account, AppState, ParsedTxn, ParseResult, StatementImport, Txn } from './types';
-import { categorize, extractMerchant, pairTransfers, type Context } from './categorize/engine';
+import { categorize, extractMerchant, pairCardBills, pairTransfers, type Context } from './categorize/engine';
+import { CARD_PAYMENT } from './parse/card';
 import { hash } from './parse/util';
 import { categoryCounted, isValidCategory } from './categorize/categories';
 
@@ -20,13 +21,16 @@ export async function parseFile(file: File, password?: string, settings?: AppSta
 
 export function accountFor(result: ParseResult, state: AppState, fileName: string): { account: Account; isNew: boolean } {
   const { bank, accountNumber, holderName } = result.meta;
+  const card = result.meta.accountType === 'card';
   const digits = (accountNumber ?? '').replace(/\D/g, '');
   const last4 = digits.slice(-4) || hash(fileName).slice(0, 4);
-  const id = `${bank}-${last4}`;
+  const id = card ? `${bank}-CC-${last4}` : `${bank}-${last4}`;
+  // A card and a bank account never match each other, even with the same last four digits.
+  const same = state.accounts.filter((a) => (a.type === 'card') === card);
   // The same account number is the same account, even if an older upload named the bank differently.
-  const byLast4 = state.accounts.filter((a) => a.number.replace(/\D/g, '').slice(-4) === last4);
-  const existing = state.accounts.find((a) => a.id === id)
-    ?? (digits.length >= 8 ? state.accounts.find((a) => a.number.replace(/\D/g, '') === digits) : undefined)
+  const byLast4 = same.filter((a) => a.number.replace(/\D/g, '').slice(-4) === last4);
+  const existing = same.find((a) => a.id === id)
+    ?? (digits.length >= 8 && !card ? same.find((a) => a.number.replace(/\D/g, '') === digits) : undefined)
     // Only the last four digits to go on: one account ending that way is the one.
     ?? (digits.length >= 4 && byLast4.length === 1 ? byLast4[0] : undefined);
   if (existing) {
@@ -34,7 +38,7 @@ export function accountFor(result: ParseResult, state: AppState, fileName: strin
     const relabel = bank !== 'Unknown' && bank !== existing.bank && existing.bankSet !== 'manual';
     return { account: relabel ? { ...existing, bank } : existing, isNew: false };
   }
-  return { account: { id, bank, number: accountNumber ?? last4, holderName, bankChecked: true }, isNew: true };
+  return { account: { id, bank, number: accountNumber ?? last4, holderName, bankChecked: true, ...(card ? { type: 'card' as const } : {}) }, isNew: true };
 }
 
 export function txnId(accountId: string, t: { date: string; amount: number; direction: string; balance?: number; description: string }, seq: number): string {
@@ -69,10 +73,33 @@ export function classify(p: ParsedTxn, ctx: Context, accountId: string): Classif
   if (hint?.payee.trim() && !/^(self|unknown|uncategori[sz]ed|n\/?a|none|-)$/i.test(hint.payee.trim())) { out.merchantName = hint.payee.trim().slice(0, 40); out.titleSet = 'ai'; }
   if (hint && (c.source === 'default' || c.weak)) { out.kind = hint.kind; out.category = hint.category; out.source = 'ai'; }
   if (c.title) { out.merchantName = c.title; out.titleSet = 'manual'; }
+  if (ctx.accounts.some((a) => a.id === accountId && a.type === 'card')) forCard(p, out);
   // Categories switched off in Settings → What counts are left out of totals.
   if (!categoryCounted(ctx.settings, out.kind, out.category)) out.excluded = true;
   return out;
 }
+
+const CARD_CHARGES = /\b(IGST|CGST|SGST|GST|FINANCE CHARGES?|LATE (PAYMENT )?FEE|ANNUAL (MEMBERSHIP )?FEE|RENEWAL FEE|INTEREST|OVER ?LIMIT|MARK ?UP|FUEL SURCHARGE|CASH ADVANCE FEE)\b/i;
+
+/**
+ * A card's own rows: purchases are spending, fees and taxes are bank charges, a payment
+ * towards the bill is the card bill, cashback is income, and any other credit is a refund
+ * that takes spending back down. Your own choices (learned rules) win.
+ */
+function forCard(p: ParsedTxn, out: Classified): void {
+  if (out.source === 'learned' || out.source === 'manual') return;
+  const d = p.description;
+  const set = (kind: Classified['kind'], category: string) => { out.kind = kind; out.category = category; if (out.source === 'default') out.source = 'rule'; };
+  if (p.direction === 'credit') {
+    if (CARD_PAYMENT.test(d) || out.kind === 'cc_bill' || out.kind === 'transfer') set('cc_bill', 'Credit Card Bill');
+    else if (/cash ?back|reward|redemption/i.test(d)) set('income', 'Refund & Cashback');
+    else if (out.kind !== 'spend') set('spend', 'Shopping');
+    return;
+  }
+  if (CARD_CHARGES.test(d)) set('spend', 'Bank Charges');
+  else if (out.kind !== 'spend' && out.kind !== 'investment') set('spend', out.kind === 'cc_bill' || out.kind === 'transfer' ? UNCATEGORISED_SPEND : out.category && isValidCategory('spend', out.category) ? out.category : UNCATEGORISED_SPEND);
+}
+const UNCATEGORISED_SPEND = 'Uncategorised';
 
 export function buildPreview(result: ParseResult, state: AppState, fileName: string): ImportPreview {
   const { account, isNew } = accountFor(result, state, fileName);
@@ -90,7 +117,9 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   });
   // Pair within this statement and against earlier imports (on copies, until committed).
   const earlier = state.txns.map((t) => ({ ...t }));
-  pairTransfers([...earlier, ...fresh]);
+  const cards = cardIds([...state.accounts, account]);
+  pairTransfers([...earlier, ...fresh], cards);
+  pairCardBills([...earlier, ...fresh], cards);
   countPairs(fresh, state.settings, true);
   countPairs(earlier, state.settings, true);
   const updated = earlier.filter((t, i) => t.pairId !== state.txns[i].pairId);
@@ -153,8 +182,15 @@ export function recategorizeAll(state: AppState): AppState {
       merchantKey: c.merchantKey, merchantName: own ? t.merchantName : c.merchantName, titleSet: own ? t.titleSet : c.titleSet,
     };
   });
-  pairTransfers(txns);
+  const cards = cardIds(state.accounts);
+  pairTransfers(txns, cards);
+  pairCardBills(txns, cards);
   return { ...state, txns: countPairs(txns, state.settings) };
+}
+
+/** Accounts that are credit cards. */
+export function cardIds(accounts: Account[]): Set<string> {
+  return new Set(accounts.filter((a) => a.type === 'card').map((a) => a.id));
 }
 
 /** Fewer balance breaks wins; then more rows. */
@@ -193,15 +229,23 @@ export async function readStatement(
     const { readSheet } = await import('./parse/sheet');
     result = { ...(await readSheet(data.slice(0))), reader: 'local' };
   } else {
-    const [{ readPdfItems }, { groupLines, parseLayout }] = await Promise.all([import('./parse/pdf'), import('./parse/layout')]);
+    const [{ readPdfItems }, { groupLines, parseLayout }, { isCardStatement, parseCardLayout }] = await Promise.all([import('./parse/pdf'), import('./parse/layout'), import('./parse/card')]);
     onProgress?.({ stage: 'local', done: 0, total: 1 });
     items = await readPdfItems(data.slice(0), password);
     let best: ParseResult | null = null;
-    for (const tolerance of [2, 1, 3, 4]) {
-      const pages = items.map((p) => groupLines(p, tolerance));
-      for (const preLine of [0.75, 0.6, 0.9]) {
-        const r = parseLayout(pages, { preLine });
-        if (!best || better(r, best)) best = r;
+    if (isCardStatement(items.map((p) => groupLines(p)))) {
+      // a credit card statement: no running balance, so the reading with the most rows wins
+      for (const tolerance of [2, 1, 3, 4]) {
+        const r = parseCardLayout(items.map((p) => groupLines(p, tolerance)));
+        if (!best || r.txns.length > best.txns.length) best = r;
+      }
+    } else {
+      for (const tolerance of [2, 1, 3, 4]) {
+        const pages = items.map((p) => groupLines(p, tolerance));
+        for (const preLine of [0.75, 0.6, 0.9]) {
+          const r = parseLayout(pages, { preLine });
+          if (!best || better(r, best)) best = r;
+        }
       }
     }
     result = { ...best!, reader: 'local' };
@@ -211,10 +255,12 @@ export async function readStatement(
   const [{ scanWithGemini, pickReading }, { suggestForRows }, { groupLines }, { aiSession }] = await Promise.all([
     import('./parse/aiScan'), import('./categorize/gemini'), import('./parse/layout'), import('./ai/providers'),
   ]);
-  if (items && (result.balanceMismatches > 0 || !result.txns.length)) {
+  const card = result.meta.accountType === 'card';
+  // a bank statement goes to the AI when its running balance breaks; a card one (no balance) when nothing was read
+  if (items && (card ? !result.txns.length : result.balanceMismatches > 0 || !result.txns.length)) {
     try {
       const ai = await scanWithGemini(items.map((p) => groupLines(p)), settings, result.meta.holderName,
-        (done, total) => onProgress?.({ stage: 'ai-read', done, total }));
+        (done, total) => onProgress?.({ stage: 'ai-read', done, total }), 2000, card);
       result = pickReading(result, ai);
     } catch (e) {
       result = pickReading(result, null, (e as Error).message);

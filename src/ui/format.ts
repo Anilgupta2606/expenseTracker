@@ -44,6 +44,9 @@ export function applyFilters(txns: Txn[], f: Filters, opts: { kind?: boolean } =
 
 export const kindVar = (k: Kind) => `var(--k-${k})`;
 
+/** "HDFC ••1234", or "HDFC card ••1234" for a credit card. */
+export const accountLabel = (a: { bank: string; number: string; type?: 'card' }) => `${a.bank}${a.type === 'card' ? ' card' : ''} ••${a.number.replace(/\D/g, '').slice(-4) || a.number.slice(-4)}`;
+
 export function initials(name: string): string {
   const parts = name.replace(/[^A-Za-z0-9 ]/g, ' ').trim().split(/\s+/);
   return ((parts[0]?.[0] ?? '?') + (parts[1]?.[0] ?? '')).toUpperCase();

@@ -2,7 +2,7 @@ import type { Kind, Txn } from '../types';
 import { CATEGORIES, categoryCounted, KIND_LABEL } from '../categorize/categories';
 import { detectMethod } from '../categorize/engine';
 import { app, toast, update } from './app';
-import { dayLabel, esc, inrFull } from './format';
+import { dayLabel, esc, inrFull, accountLabel } from './format';
 
 const SOURCE_LABEL: Record<Txn['source'], string> = {
   default: 'Guessed from the payment type',
@@ -38,7 +38,7 @@ export function openEditSheet(t: Txn) {
         <h2 class="ellipsis" style="margin:0">${esc(t.merchantName)}</h2>
         <span class="num amt ${t.direction}" style="font-size:18px;font-weight:650">${t.direction === 'credit' ? '+' : '−'}${inrFull(t.amount)}</span>
       </div>
-      <div class="small muted">${esc(dayLabel(t.date))} · ${esc(account ? `${account.bank} ••${account.number.slice(-4)}` : t.accountId)} · ${esc(detectMethod(t.description.toUpperCase()))}</div>
+      <div class="small muted">${esc(dayLabel(t.date))} · ${esc(account ? accountLabel(account) : t.accountId)} · ${esc(detectMethod(t.description.toUpperCase()))}</div>
       <div class="desc-box">${esc(t.description)}</div>
 
       <label class="field"><span>Title</span><input type="text" id="title" value="${esc(title)}" maxlength="40" placeholder="${esc(t.merchantName)}"></label>

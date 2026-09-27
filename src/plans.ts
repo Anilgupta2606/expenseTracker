@@ -49,21 +49,24 @@ export interface MonthActuals {
   transfers: number;
   /** Card bill payments (also part of `spend`). */
   cardBills: number;
+  /** Card bills whose purchases come from the card's own statement (not part of `spend`). */
+  cardCovered: number;
   /** Money you chose not to count. */
   excluded: number;
   credits: number; // income-type credits seen in statements (not used for plans)
 }
 
 export function actualsFor(txns: Txn[]): MonthActuals {
-  const a: MonthActuals = { spend: 0, refunds: 0, invested: 0, redeemed: 0, transfers: 0, cardBills: 0, excluded: 0, credits: 0 };
+  const a: MonthActuals = { spend: 0, refunds: 0, invested: 0, redeemed: 0, transfers: 0, cardBills: 0, cardCovered: 0, excluded: 0, credits: 0 };
   for (const t of txns) {
     const out = t.direction === 'debit';
     if (t.excluded || t.kind === 'ignore') { a.excluded += t.amount; continue; }
     if (t.kind === 'spend') { if (out) a.spend += t.amount; else a.refunds += t.amount; }
     else if (t.kind === 'investment') { if (out) a.invested += t.amount; else a.redeemed += t.amount; }
     else if (t.kind === 'transfer') { if (out) a.transfers += t.amount; }
-    // Card bill payments count as spending.
-    else if (t.kind === 'cc_bill') { if (out) { a.cardBills += t.amount; a.spend += t.amount; } }
+    // Card bill payments count as spending - unless the card's own statement is imported
+    // (the bill is then paired with it), when the card's purchases are the spending instead.
+    else if (t.kind === 'cc_bill') { if (out && t.pairId) a.cardCovered += t.amount; else if (out) { a.cardBills += t.amount; a.spend += t.amount; } }
     else if (t.kind === 'income' && !out) a.credits += t.amount;
   }
   a.spend -= a.refunds;

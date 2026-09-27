@@ -25,6 +25,8 @@ export interface StatementMeta {
   bank: string; // 'HDFC' | 'ICICI' | 'SBI' | ... | 'Unknown'
   accountNumber?: string;
   holderName?: string;
+  /** A credit card statement (purchases, payments and refunds; no running balance). */
+  accountType?: 'card';
 }
 
 export interface ParseResult {
@@ -68,6 +70,8 @@ export interface Account {
   bankSet?: 'manual';
   number: string;
   holderName?: string;
+  /** A credit card, read from its own statements. */
+  type?: 'card';
 }
 
 /** A rule learned from the user's corrections. */

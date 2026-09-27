@@ -1,5 +1,6 @@
 import type { ParseResult, ParsedTxn, Direction } from '../types';
 import { detectAccountNumber, detectBank, detectHolderName, parseAmount, parseDate, round2 } from './util';
+import { detectCardNumber } from './card';
 
 export type Cell = string | number | boolean | Date | null | undefined;
 
@@ -23,7 +24,7 @@ interface Cols {
   amount: number; drcr: number;
 }
 
-function findHeader(rows: Cell[][]): { index: number; cols: Cols } | null {
+function findHeader(rows: Cell[][], card = false): { index: number; cols: Cols } | null {
   for (let i = 0; i < Math.min(rows.length, 60); i++) {
     const cells = rows[i].map((c) => text(c).toLowerCase());
     const find = (re: RegExp, not?: RegExp) => cells.findIndex((c) => re.test(c) && !(not && not.test(c)));
@@ -42,7 +43,8 @@ function findHeader(rows: Cell[][]): { index: number; cols: Cols } | null {
       drcr: find(/dr\s*\/\s*cr|cr\s*\/\s*dr|^type$|txn type/),
     };
     if (cols.desc < 0) continue;
-    if ((cols.withdrawal >= 0 && cols.deposit >= 0) || (cols.amount >= 0 && cols.drcr >= 0)) {
+    // a card export may have one Amount column with "Cr" on credits
+    if ((cols.withdrawal >= 0 && cols.deposit >= 0) || (cols.amount >= 0 && (cols.drcr >= 0 || card))) {
       return { index: i, cols };
     }
   }
@@ -53,11 +55,13 @@ function findHeader(rows: Cell[][]): { index: number; cols: Cols } | null {
 export function parseRows(rows: Cell[][]): ParseResult {
   const lines = rows.map((r) => r.map(text).filter(Boolean).join('  '));
   const joined = lines.join('\n');
-  const header = findHeader(rows);
+  const card = /credit\s*card/i.test(joined) && /(total|minimum)\s+(amount\s+)?due|payment\s+due\s+date|credit\s+limit|card\s*(no|number)/i.test(joined);
+  const header = findHeader(rows, card);
   const meta = {
     bank: detectBank(joined, lines.slice(0, header ? header.index : 20).join('\n')),
-    accountNumber: detectAccountNumber(lines.slice(0, 30).join('\n')),
+    accountNumber: card ? detectCardNumber(lines.slice(0, 30).join('\n')) ?? detectAccountNumber(lines.slice(0, 30).join('\n')) : detectAccountNumber(lines.slice(0, 30).join('\n')),
     holderName: detectHolderName(lines.slice(0, 30)),
+    ...(card ? { accountType: 'card' as const } : {}),
   };
   if (!header) {
     return { meta, txns: [], balanceMismatches: 0, warnings: ['Could not find the header row (Date / Narration / Withdrawal / Deposit).'] };
@@ -77,8 +81,9 @@ export function parseRows(rows: Cell[][]): ParseResult {
       const dep = parseAmount(row[c.deposit] as string | number);
       if (w) { amount = w; direction = 'debit'; } else if (dep) { amount = dep; direction = 'credit'; }
     } else {
-      amount = parseAmount(row[c.amount] as string | number);
-      direction = /^c/i.test(text(row[c.drcr])) ? 'credit' : 'debit';
+      const raw = text(row[c.amount]);
+      amount = parseAmount(raw.replace(/\s*(Cr|CR|cr|C|Dr|DR|dr|D)\s*$/, '')) ?? parseAmount(row[c.amount] as string | number);
+      direction = c.drcr >= 0 ? (/^c/i.test(text(row[c.drcr])) ? 'credit' : 'debit') : /\s*(cr|c)\s*$/i.test(raw) ? 'credit' : 'debit';
     }
     if (!amount) continue;
     const balance = c.balance >= 0 ? parseAmount(row[c.balance] as string | number) ?? undefined : undefined;

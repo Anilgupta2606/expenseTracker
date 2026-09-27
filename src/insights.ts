@@ -17,7 +17,8 @@ function prevMonth(ym: string): string {
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
 }
 
-const isSpend = (t: Txn) => (t.kind === 'spend' || t.kind === 'cc_bill') && t.direction === 'debit' && !t.excluded;
+// a card bill paid off a card whose own statement is imported is not spending: its purchases are
+const isSpend = (t: Txn) => (t.kind === 'spend' || (t.kind === 'cc_bill' && !t.pairId)) && t.direction === 'debit' && !t.excluded;
 
 export interface UnusualSpend {
   txn: Txn;

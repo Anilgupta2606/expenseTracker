@@ -5,7 +5,7 @@ import { buildLedgerExport } from '../ledgerExport';
 import { categoryCounted } from '../categorize/categories';
 import { categoryShifts, pairKey, recurringPayments, spendAlerts, subscriptions, unpairedTransfers, unusualSpends, type SpendAlert, type UnpairedTransfer } from '../insights';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
-import { applyFilters, dayLabel, esc, inr, inrFull, kindVar, monthLabel, monthShort } from './format';
+import { applyFilters, dayLabel, esc, inr, inrFull, kindVar, monthLabel, monthShort, accountLabel } from './format';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { openPlanSheet } from './planSheet';
 
@@ -31,7 +31,7 @@ function accountSelect(): string {
   if (state.accounts.length + (hasManual ? 1 : 0) < 2) return '';
   return `<select data-filter="account" aria-label="Account" class="toolbar-select">
     <option value="all">All accounts</option>
-    ${state.accounts.map((a) => `<option value="${esc(a.id)}" ${filters.account === a.id ? 'selected' : ''}>${esc(a.bank)} ••${esc(a.number.slice(-4))}</option>`).join('')}
+    ${state.accounts.map((a) => `<option value="${esc(a.id)}" ${filters.account === a.id ? 'selected' : ''}>${esc(accountLabel(a))}</option>`).join('')}
     ${hasManual ? `<option value="${MANUAL_ACCOUNT}" ${filters.account === MANUAL_ACCOUNT ? 'selected' : ''}>Added by hand</option>` : ''}
   </select>`;
 }
@@ -128,7 +128,7 @@ function budgetPanel(s: MonthSummary): string {
 }
 
 function glancePanel(s: MonthSummary, txns: Txn[], prev: MonthSummary | undefined, cats: { category: string; total: number }[]): string {
-  const spendTxns = txns.filter((t) => (t.kind === 'spend' || t.kind === 'cc_bill') && t.direction === 'debit' && !t.excluded);
+  const spendTxns = txns.filter((t) => (t.kind === 'spend' || (t.kind === 'cc_bill' && !t.pairId)) && t.direction === 'debit' && !t.excluded);
   const biggest = [...spendTxns].sort((a, b) => b.amount - a.amount)[0];
   const manual = txns.filter((t) => t.accountId === MANUAL_ACCOUNT).length;
   const days = new Set(spendTxns.map((t) => t.date)).size;
@@ -245,7 +245,7 @@ function subscriptionsPanel(txns: Txn[]): string {
 /** Marks a same-amount pair across two of your accounts as a self transfer (or leaves it be). */
 function openPairsSheet(pairs: UnpairedTransfer[]) {
   const accounts = app.state.accounts;
-  const bank = (id: string) => { const a = accounts.find((x) => x.id === id); return a ? `${a.bank} ••${a.number.slice(-4)}` : id; };
+  const bank = (id: string) => { const a = accounts.find((x) => x.id === id); return a ? accountLabel(a) : id; };
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
   const draw = (list: UnpairedTransfer[]) => {
@@ -387,7 +387,7 @@ export function renderDashboard(root: HTMLElement) {
       <section class="panel">
         <header class="panel-head"><div><h2>Get started</h2></div></header>
         <ol class="steps">
-          <li><strong>Upload a statement.</strong> PDF or Excel from HDFC, ICICI and most other banks.</li>
+          <li><strong>Upload a statement.</strong> PDF or Excel from HDFC, ICICI and most other banks - bank accounts and credit cards.</li>
           <li><strong>Set your monthly plan.</strong> Income, expected spend and expected investment.</li>
           <li><strong>Add cash spends</strong> by hand whenever you need to.</li>
         </ol>
@@ -430,7 +430,7 @@ export function renderDashboard(root: HTMLElement) {
   // Card bill payments count as spending; they appear as their own category.
   const spendCats = [
     ...byCategory(of('spend', 'debit')).map((c) => ({ ...c, kind: 'spend' as Kind })),
-    ...byCategory(of('cc_bill', 'debit')).map((c) => ({ ...c, kind: 'cc_bill' as Kind })),
+    ...byCategory(of('cc_bill', 'debit').filter((t) => !t.pairId)).map((c) => ({ ...c, kind: 'cc_bill' as Kind })),
   ].sort((a, b) => b.total - a.total);
   // Money put into each investment type this month (the pie shows what went in, not redemptions).
   const investedCats = byCategory(of('investment', 'debit')).map((c) => ({ ...c, kind: 'investment' as Kind }));
@@ -442,6 +442,7 @@ export function renderDashboard(root: HTMLElement) {
 
   const movements = [
     { kind: 'transfer' as Kind, label: 'Self transfers', value: s.actual.transfers, note: 'Between your own accounts' },
+    { kind: 'cc_bill' as Kind, label: 'Card bills, spending from the card', value: s.actual.cardCovered, note: 'Its purchases come from the card statement' },
     { kind: 'ignore' as Kind, label: 'Not counted by you', value: s.actual.excluded, note: 'Rows with Counted unticked', filter: 'excluded' },
     { kind: 'investment' as Kind, label: 'Redeemed investments', value: s.actual.redeemed, note: 'Money back from investments' },
     { kind: 'income' as Kind, label: 'Credits in statements', value: s.actual.credits, note: 'Your income entry is used instead' },

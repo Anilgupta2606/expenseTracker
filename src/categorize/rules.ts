@@ -15,7 +15,7 @@ export interface Rule {
  */
 export const PRIORITY_RULES: Rule[] = [
   // Credit card bill payments are not spend: the spend happened on the card.
-  { re: /CREDIT ?CARD|INDMONEYCC|\bCC ?(BILL|PAYMENT|PMT)\b|CARD ?BILL|CRED ?CLUB|\bCRED\b|BILLPAY.*\d{4,6}X{3,}\d{4}|AUTOPAY.*CARD|\bPAVC\b/, kind: 'cc_bill', category: 'Credit Card Bill', dir: 'debit' },
+  { re: /CREDIT ?CARD|INDMONEYCC|\bCC ?(BILL|PAYMENT|PMT)\b|CARD ?BILL|CRED ?CLUB|\bCRED\b|BILLPAY.*\d{4,6}X{3,}\d{4}|AUTOPAY.*CARD|\bPAVC\b|\bCC\b.*\d{4,6}X{3,}\d{4}|\d{4,6}X{4,}\d{4}.*(AUTOPAY|\bSI\b|SI-|BILL ?PAY|PAYMENT)/, kind: 'cc_bill', category: 'Credit Card Bill', dir: 'debit' },
   { re: /SALARY|PAYROLL|\bSAL\b.*\bCR\b/, kind: 'income', category: 'Salary', dir: 'credit' },
   { re: /\bDIV\b|DIVIDEND|\bDIV\d/, kind: 'income', category: 'Dividend', dir: 'credit' },
   { re: /REFUND|REVERSAL|\bRVSL\b|\bREV\b|CASHBACK|CASH BACK|ONE97|\bREWARD/, kind: 'income', category: 'Refund & Cashback', dir: 'credit' },

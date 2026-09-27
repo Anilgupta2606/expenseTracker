@@ -158,9 +158,10 @@ const WEAK_SOURCES = new Set<CategorySource>(['default', 'self', 'pair', 'rule']
  * Money leaving one of your accounts and arriving in another (same amount,
  * within 3 days) is a self transfer, whatever the narration says.
  */
-export function pairTransfers(txns: Txn[]): void {
+export function pairTransfers(txns: Txn[], cards: Set<string> = new Set()): void {
   const DAY = 86400000;
-  const open = txns.filter((t) => !t.pairId && WEAK_SOURCES.has(t.source) && PAIRABLE.has(t.category));
+  // a card's purchases and refunds are never money moving between your own accounts
+  const open = txns.filter((t) => !t.pairId && !cards.has(t.accountId) && WEAK_SOURCES.has(t.source) && PAIRABLE.has(t.category));
   const credits = open.filter((t) => t.direction === 'credit');
   for (const out of open.filter((t) => t.direction === 'debit')) {
     const outDate = Date.parse(out.date);
@@ -175,5 +176,27 @@ export function pairTransfers(txns: Txn[]): void {
       a.category = 'Self Transfer';
       if (a.source !== 'self') a.source = 'pair';
     }
+  }
+}
+
+/**
+ * A card bill paid from a bank account, and the same payment arriving on that card's own
+ * statement ("payment received"): the same amount, the bank side up to a week before or two
+ * days after. Once paired the bank payment no longer counts as spending - the card's
+ * purchases already do.
+ */
+export function pairCardBills(txns: Txn[], cards: Set<string>): void {
+  if (!cards.size) return;
+  const DAY = 86400000;
+  const bills = txns.filter((t) => !cards.has(t.accountId) && t.kind === 'cc_bill' && t.direction === 'debit' && !t.pairId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const pays = txns.filter((t) => cards.has(t.accountId) && t.kind === 'cc_bill' && t.direction === 'credit' && !t.pairId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  for (const p of pays) {
+    const d = Date.parse(p.date);
+    const b = bills.find((x) => !x.pairId && Math.abs(x.amount - p.amount) < 0.01 && Date.parse(x.date) >= d - 7 * DAY && Date.parse(x.date) <= d + 2 * DAY);
+    if (!b) continue;
+    b.pairId = p.id;
+    p.pairId = b.id;
   }
 }

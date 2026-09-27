@@ -9,17 +9,18 @@ import { round2 } from './util';
 const lineCells = (l: Page[number]) => [...l.items].sort((a, b) => a.x - b.x).map((i) => i.s).join(' | ');
 
 const TABLE_HEADER = (l: string) => /\bbalance\b/i.test(l) && /withdrawal|debit|deposit|credit/i.test(l);
+const CARD_HEADER = (l: string) => /\bdate\b/i.test(l) && /amount/i.test(l) && /transaction|details|description|particulars|merchant/i.test(l);
 
 /**
  * Only the transactions table leaves the device: on each page, lines above the
  * table header (name, address, account details) are dropped. Returns null when
  * no table header is found, so the on-device reader is used instead.
  */
-export function tableLines(pages: Page[]): string[][] | null {
+export function tableLines(pages: Page[], card = false): string[][] | null {
   let seenHeader = false;
   const out = pages.map((page) => {
     const lines = page.map(lineCells);
-    const at = lines.findIndex(TABLE_HEADER);
+    const at = lines.findIndex(card ? CARD_HEADER : TABLE_HEADER);
     if (at >= 0) { seenHeader = true; return lines.slice(at); }
     return seenHeader ? lines : [];
   });
@@ -98,6 +99,23 @@ Important:
 - Skip opening balance, totals, summaries, page headers and footers.
 - Hospitality businesses are usually restaurants or hotels, not hospitals. Use "Uncategorised" only when the text gives no clue.`;
 
+const CARD_PROMPT = `You read the transactions table of an Indian CREDIT CARD statement for a personal expense tracker.
+Each line below is one printed line of the table; " | " separates text pieces on the same line, left to right.
+Placeholders like [#3] and [@1] stand for hidden numbers and names: copy them exactly as they are.
+
+Return every transaction in the order printed. For each one:
+- date: the transaction date as YYYY-MM-DD (Indian statements write day first).
+- description: the transaction details exactly as printed, lines joined by single spaces. Leave out dates, reward points, serial numbers, foreign-currency amounts and page furniture.
+- amount: the amount in rupees as a positive number.
+- direction: "debit" for a purchase, fee, tax or interest; "credit" for a payment towards the card, a refund or cashback (usually marked Cr, CR, C, + or -).
+- balance: always null (card statements have no running balance).
+- payee: the real merchant, cleaned up (e.g. "Swiggy", "Amazon", "Indian Oil").
+- kind: spend for purchases, fees and refunds; cc_bill for a payment towards the card bill; income for cashback.
+- category, one of the allowed categories for that kind:
+${AI_KINDS.map((k) => `  ${k}: ${CATEGORIES[k].join(', ')}`).join('\n')}
+
+Skip the statement summary, totals, reward point summaries, page headers and footers. Use "Uncategorised" only when the text gives no clue.`;
+
 const SCAN_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -155,10 +173,10 @@ function chunks(pages: string[][], maxLines = 220): string[][] {
  */
 export async function scanWithGemini(
   pages: Page[], settings: Settings, holderName: string | undefined,
-  onProgress?: (done: number, total: number) => void, retryDelay = 2000,
+  onProgress?: (done: number, total: number) => void, retryDelay = 2000, card = false,
 ): Promise<ParsedTxn[] | null> {
   if (!hasAi(settings)) return null;
-  const table = tableLines(pages);
+  const table = tableLines(pages, card);
   if (!table) return null;
   const mask = makeMask([...settings.ownNames, ...settings.familyNames, holderName ?? '']);
   const session = aiSession(settings, retryDelay);
@@ -166,7 +184,7 @@ export async function scanWithGemini(
   const txns: ParsedTxn[] = [];
   for (let i = 0; i < parts.length; i++) {
     onProgress?.(i, parts.length);
-    const { rows } = await session.generate<{ rows: AiRow[] }>(`${SCAN_PROMPT}\n\nLines:\n${parts[i].join('\n')}`, SCAN_SCHEMA);
+    const { rows } = await session.generate<{ rows: AiRow[] }>(`${card ? CARD_PROMPT : SCAN_PROMPT}\n\nLines:\n${parts[i].join('\n')}`, SCAN_SCHEMA);
     for (const r of rows) {
       const amount = round2(Math.abs(Number(r.amount)));
       if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date) || !(amount > 0) || (r.direction !== 'debit' && r.direction !== 'credit')) continue;

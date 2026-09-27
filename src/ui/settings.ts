@@ -9,7 +9,7 @@ const BANK_NAMES = ['HDFC', 'ICICI', 'SBI', 'Axis', 'Kotak', 'IDFC', 'Yes', 'PNB
 import { emptyState, migrate } from '../store';
 import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
-import { esc, kindVar } from './format';
+import { esc, kindVar, accountLabel } from './format';
 import { DEFAULT_PLAN_LINK } from '../links';
 import { isOn, keyOf, knownModels, listModels, orderOf, pinnedModel, providerInfo, rankModels, rememberModels, restingUntil, wake, type ProviderId } from '../ai/providers';
 
@@ -166,7 +166,7 @@ export function renderSettings(root: HTMLElement) {
                 <input type="text" id="acct-bank" list="bank-names" value="${esc(a.bank)}" autocomplete="off"></label>
               <datalist id="bank-names">${BANK_NAMES.map((b) => `<option value="${b}">`).join('')}</datalist>
               <button class="btn" data-cancel-account>Cancel</button><button class="btn primary" data-save-account="${esc(a.id)}">Save</button></div></td></tr>`
-          : `<tr><td>${esc(a.bank)} ••${esc(a.number.slice(-4))}${a.bankSet === 'manual' ? ' <span class="tiny">(set by you)</span>' : ''}<div class="tiny">${esc(a.holderName ?? '')}</div></td>
+          : `<tr><td>${esc(accountLabel(a))}${a.bankSet === 'manual' ? ' <span class="tiny">(set by you)</span>' : ''}<div class="tiny">${esc(a.holderName ?? '')}</div></td>
           <td class="num">${state.txns.filter((t) => t.accountId === a.id).length}</td>
           <td style="text-align:right;white-space:nowrap"><button class="btn" data-edit-account="${esc(a.id)}">Edit</button> <button class="btn danger" data-del-account="${esc(a.id)}">Delete</button></td></tr>`).join('')}
       </table>` : '<p class="muted small">No accounts yet. Upload a statement to add one.</p>'}
