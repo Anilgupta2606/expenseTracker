@@ -1,11 +1,14 @@
 import type { Settings } from './types';
 
-/** Your "16-Year Ledger" investment plan (a private claude.ai page; it opens only when you are signed in there). */
-export const DEFAULT_PLAN_LINK = 'https://claude.ai/code/artifact/6d92f9b1-f2cc-42eb-88d5-901bc6a07051';
+/** Your "16-Year Ledger" investment plan, on this same site (it moved from a claude.ai page). */
+export const DEFAULT_PLAN_LINK = 'https://anilgupta2606.github.io/InvestmentPlan/';
+/** The plan's old claude.ai address: a link still saved as that opens the new site. */
+const OLD_PLAN_LINK = /^https:\/\/claude\.ai\/code\/artifact\/6d92f9b1-/i;
 
 /** The investment plan link to show, or null when you cleared it in Settings. */
 export function planLink(settings: Settings): string | null {
-  const v = settings.planLink ?? DEFAULT_PLAN_LINK;
+  const saved = settings.planLink;
+  const v = saved === undefined || OLD_PLAN_LINK.test(saved.trim()) ? DEFAULT_PLAN_LINK : saved;
   return /^https:\/\//i.test(v.trim()) ? v.trim() : null;
 }
 
