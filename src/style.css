@@ -463,3 +463,10 @@ body.dropping::after { content: 'Drop statements to read them'; position: fixed;
 .chip-btn.on.bad { background: var(--bad-bg); color: var(--bad); }
 .chip-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .banner.alert-banner { background: var(--bad-bg); color: var(--bad); }
+
+/* AI review of the month */
+.ai-review { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--accent-soft); }
+.ai-review-head { margin: 0 0 6px; font-weight: 600; }
+.ai-review ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.ai-review ul.watch li::marker { content: '→ '; }
+.linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }

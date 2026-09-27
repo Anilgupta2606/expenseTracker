@@ -1,6 +1,8 @@
 import type { Kind, Txn } from '../types';
 import { currentMonth, summarize, summarizeAll, type MonthSummary } from '../plans';
 import { app, navigate, render, toast, update } from './app';
+import { aiMonthReview, cachedReview } from '../monthReview';
+import { hasAi } from '../ai/providers';
 import { buildLedgerExport } from '../ledgerExport';
 import { categoryCounted } from '../categorize/categories';
 import { categoryShifts, pairKey, recurringPayments, spendAlerts, subscriptions, unpairedTransfers, unusualSpends, type SpendAlert, type UnpairedTransfer } from '../insights';
@@ -156,12 +158,27 @@ function openPicked(label: string, ids: string[]) {
   navigate('#txns');
 }
 
-/** Month-end review: what moved against the usual, and payments that stand out. */
+/** The AI's note on the month, when there is one (or the button to ask for it). */
+let reviewBusy = '';
+let reviewError: { month: string; msg: string } | null = null;
+function aiReviewBlock(month: string, txns: Txn[]): string {
+  const c = cachedReview(app.state, month, txns);
+  if (c) {
+    return `<div class="ai-review"><p class="ai-review-head">${esc(c.review.headline)}</p>
+      ${c.review.points.length ? `<ul>${c.review.points.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+      ${c.review.watch.length ? `<p class="tiny" style="margin:8px 0 4px">Keep an eye on</p><ul class="watch">${c.review.watch.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>` : ''}
+      <p class="tiny" style="margin:8px 0 0">AI review${c.model ? ` by ${esc(c.model)}` : ''}, ${esc(new Date(c.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }))}. It sees totals, categories and payee names only. <button class="linkish" data-ai-review="${esc(month)}" data-again="1">Write it again</button></p></div>`;
+  }
+  if (!hasAi(app.state.settings)) return `<p class="tiny" style="margin:12px 0 0">Add a free AI key in <a href="#settings">Settings → AI assistants</a> for a written review of the month.</p>`;
+  const err = reviewError?.month === month ? `<p class="small bad" style="margin:6px 0 0">${esc(reviewError.msg)}</p>` : '';
+  return `<div style="margin-top:12px"><button class="btn small-btn" data-ai-review="${esc(month)}" ${reviewBusy === month ? 'disabled' : ''}>${reviewBusy === month ? '<span class="spinner"></span>Writing the review…' : '✦ AI review of the month'}</button>${err}</div>`;
+}
+
+/** Month-end review: what moved against the usual, payments that stand out, and the AI's note. */
 function reviewPanel(month: string, txns: Txn[]): string {
   const shifts = categoryShifts(txns, month);
   const odd = unusualSpends(txns, month);
-  if (!shifts.length && !odd.length) return '';
-  const body = `${shifts.length ? `<p class="tiny" style="margin:0 0 6px">Against your average of the months before</p>
+  const body = `${!shifts.length && !odd.length ? '<p class="muted small" style="margin:0">Nothing unusual by the numbers against the months before.</p>' : ''}${shifts.length ? `<p class="tiny" style="margin:0 0 6px">Against your average of the months before</p>
     <ul class="movements">${shifts.map((c) => `<li class="mv-row"><span class="grow"><span class="mv-label">${esc(c.category)}</span>
       <span class="tiny">${inr(c.now)} vs usual ${inr(c.usual)}</span></span>
       <span class="num ${c.delta > 0 ? 'bad' : 'ok'}">${c.delta > 0 ? '▲' : '▼'} ${inr(Math.abs(c.delta))}</span></li>`).join('')}</ul>` : ''}
@@ -169,7 +186,8 @@ function reviewPanel(month: string, txns: Txn[]): string {
     <ul class="movements">${odd.map((u) => `<li class="mv-row"><span class="grow"><span class="mv-label">${esc(u.txn.merchantName)}</span>
       <span class="tiny">${esc(dayLabel(u.txn.date))} · ${esc(u.reason)}</span></span>
       <span class="num">${inrFull(u.txn.amount)}</span></li>`).join('')}</ul>
-    <button class="btn small-btn" style="margin-top:8px" data-open-odd="${esc(odd.map((u) => u.txn.id).join(','))}">Open in Transactions</button>` : ''}`;
+    <button class="btn small-btn" style="margin-top:8px" data-open-odd="${esc(odd.map((u) => u.txn.id).join(','))}">Open in Transactions</button>` : ''}
+    ${aiReviewBlock(month, txns)}`;
   return section('Month in review', body);
 }
 
@@ -517,6 +535,14 @@ export function renderDashboard(root: HTMLElement) {
   root.querySelector('[data-ledger-copy]')?.addEventListener('click', () => void copyForLedger());
   root.querySelector('[data-pairs]')?.addEventListener('click', () => openPairsSheet(unpaired));
   root.querySelector('[data-alerts]')?.addEventListener('click', () => openAlertsSheet(alertMonth, alerts));
+  root.querySelectorAll<HTMLElement>('[data-ai-review]').forEach((b) => b.addEventListener('click', async () => {
+    const m = b.dataset.aiReview!;
+    if (b.dataset.again) { try { const c = JSON.parse(localStorage.getItem('et-ai-month-review') || '{}'); delete c[m]; localStorage.setItem('et-ai-month-review', JSON.stringify(c)); } catch { /* ignore */ } }
+    reviewBusy = m; reviewError = null; render();
+    try { await aiMonthReview(app.state, m, scoped); }
+    catch (e) { reviewError = { month: m, msg: (e as Error).message }; }
+    finally { reviewBusy = ''; render(); }
+  }));
   root.querySelector<HTMLElement>('[data-open-odd]')?.addEventListener('click', (e) => openPicked(`Stand-out payments, ${monthShort(month)}`, (e.currentTarget as HTMLElement).dataset.openOdd!.split(',')));
   root.querySelectorAll<HTMLElement>('[data-recurring]').forEach((el) => el.addEventListener('click', (e) => {
     e.preventDefault();
