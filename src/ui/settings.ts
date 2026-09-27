@@ -15,10 +15,21 @@ import { isOn, keyOf, knownModels, listModels, orderOf, pinnedModel, providerInf
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
-/** Whether the Learned rules table is open: remembered on this device, folded by default. */
-const RULES_OPEN = 'et-rules-open';
-const rulesOpen = () => { try { return localStorage.getItem(RULES_OPEN) === '1'; } catch { return false; } };
-const setRulesOpen = (v: boolean) => { try { localStorage.setItem(RULES_OPEN, v ? '1' : '0'); } catch { /* storage blocked */ } };
+/* Cards whose body folds under their heading (Learned rules, What counts in totals, AI assistants):
+   folded by default, and each device remembers which ones you left open. */
+const foldKey = (id: string) => (id === 'rules' ? 'et-rules-open' : `et-fold-${id}`);
+const foldOpen = (id: string) => { try { return localStorage.getItem(foldKey(id)) === '1'; } catch { return false; } };
+const setFoldOpen = (id: string, v: boolean) => { try { localStorage.setItem(foldKey(id), v ? '1' : '0'); } catch { /* storage blocked */ } };
+/** The heading as the fold's button, with a short summary that stays visible when folded. */
+const foldHead = (id: string, title: string, meta: string) => `<h2 class="fold-h"><button class="fold-toggle" data-fold="${id}" aria-expanded="${foldOpen(id)}" aria-controls="fold-${id}">
+  <span class="ai-chev" aria-hidden="true">▸</span> ${esc(title)} <span class="muted small">${esc(meta)}</span></button></h2>`;
+const foldBody = (id: string) => `<div id="fold-${id}" ${foldOpen(id) ? '' : 'hidden'}>`;
+/** The AI card's folded summary: how many services can answer, and which answers first. */
+function aiMeta(s: AppState['settings']): string {
+  const ready = orderOf(s).filter((id) => isOn(s, id) && keyOf(s, id));
+  const free = ready.filter((id) => !restingUntil(id));
+  return ready.length ? `(${ready.length} set up · ${free.length ? `${providerInfo(free[0]).name} answers first` : 'all resting'})` : '(none set up)';
+}
 /** Which service rows are open (the rest show one summary line). Kept while the app is open. */
 const aiOpen = new Set<string>();
 /** One row per AI service: a summary line that opens into key, check / save / remove and model. */
@@ -95,8 +106,11 @@ function whatCounts(state: AppState): string {
   const kinds: Kind[] = ['spend', 'cc_bill', 'investment', 'income', 'transfer'];
   const n = new Map<string, number>();
   for (const t of state.txns) n.set(categoryKey(t.kind, t.category), (n.get(categoryKey(t.kind, t.category)) ?? 0) + 1);
+  const all = kinds.flatMap((k) => CATEGORIES[k].map((c) => [k, c] as const));
+  const off = all.filter(([k, c]) => !categoryCounted(state.settings, k, c)).length;
   return `<div class="card">
-    <h2>What counts in totals</h2>
+    ${foldHead('counts', 'What counts in totals', `(${off ? `${off} of ${all.length} categories left out` : `all ${all.length} categories counted`})`)}
+    ${foldBody('counts')}
     <p class="small muted" style="margin-top:-4px">Untick a category to leave all its transactions out of spending, investment and income totals, now and in future uploads. You can still tick single transactions back in.</p>
     ${kinds.map((k) => `<div class="count-group">
       <div class="count-head"><span class="dot" style="background:${kindVar(k)}"></span>${esc(KIND_LABEL[k])}</div>
@@ -106,6 +120,7 @@ function whatCounts(state: AppState): string {
           <span class="grow">${esc(c)}</span><span class="tiny">${n.get(key) ?? ''}</span></label>`;
       }).join('')}</div>
     </div>`).join('')}
+    </div>
   </div>`;
 }
 
@@ -158,9 +173,8 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
-      <h2 class="fold-h"><button class="fold-toggle" id="rules-toggle" aria-expanded="${rulesOpen()}" aria-controls="rules-body">
-        <span class="ai-chev" aria-hidden="true">▸</span> Learned rules <span class="muted small">(${state.rules.length})</span></button></h2>
-      <div id="rules-body" ${rulesOpen() ? '' : 'hidden'}>
+      ${foldHead('rules', 'Learned rules', `(${state.rules.length})`)}
+      ${foldBody('rules')}
       <p class="small muted" style="margin-top:-4px">Created when you change a category and keep "Always use this" ticked.</p>
       ${state.rules.length ? `<table class="simple">
         ${state.rules.map((r, i) => `<tr><td>${esc(r.key)}${r.direction ? ` <span class="tiny">(${r.direction === 'debit' ? 'paid' : 'received'})</span>` : ''}</td><td>${esc(r.category)}</td>
@@ -178,10 +192,12 @@ export function renderSettings(root: HTMLElement) {
     </div>
 
     <div class="card">
-      <h2>AI assistants</h2>
+      ${foldHead('ai', 'AI assistants', aiMeta(s))}
+      ${foldBody('ai')}
       <p class="small muted" style="margin-top:-4px">Optional, free. Used by <strong>AI check</strong> and the AI statement reader on the Upload screen, and by the Assistant. Add keys for as many services as you like: each request goes to the first one in this order that is switched on and not resting; one that runs out of its free limit rests for 15 minutes (yellow) and the next one answers. You review every suggestion before anything changes.</p>
       <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers replaced by # and your name by SELF (the statement reader also sends the table's amounts and balances, never your name or account numbers). Free tiers may use what you send to improve their products. Keys are kept on this device (and in your encrypted sync).</p>
       ${aiRows(s)}
+      </div>
     </div>
 
     ${syncCard()}
@@ -238,7 +254,7 @@ export function renderSettings(root: HTMLElement) {
     await update((st) => recategorizeAll({ ...st, settings: { ...st.settings, ownNames: splitNames(val('own')), familyNames: splitNames(val('family')) } }));
     toast('Saved');
   });
-  root.querySelector('#rules-toggle')!.addEventListener('click', () => { setRulesOpen(!rulesOpen()); render(); });
+  root.querySelectorAll<HTMLButtonElement>('[data-fold]').forEach((b) => b.addEventListener('click', () => { const id = b.dataset.fold!; setFoldOpen(id, !foldOpen(id)); render(); }));
   root.querySelector('#recat')!.addEventListener('click', async () => {
     await update(recategorizeAll);
     toast('Re-categorised');
