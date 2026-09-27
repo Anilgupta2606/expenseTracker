@@ -3,7 +3,7 @@ import { currentMonth, summarize, summarizeAll, type MonthSummary } from '../pla
 import { app, navigate, render, toast, update } from './app';
 import { buildLedgerExport } from '../ledgerExport';
 import { categoryCounted } from '../categorize/categories';
-import { categoryShifts, pairKey, recurringPayments, unpairedTransfers, unusualSpends, type UnpairedTransfer } from '../insights';
+import { categoryShifts, pairKey, recurringPayments, subscriptions, unpairedTransfers, unusualSpends, type UnpairedTransfer } from '../insights';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
 import { applyFilters, dayLabel, esc, inr, inrFull, kindVar, monthLabel, monthShort } from './format';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
@@ -188,6 +188,28 @@ function recurringPanel(txns: Txn[]): string {
       <span class="grow"><span class="mv-label">${esc(r.name)}</span><span class="tiny">${esc(r.category)} · around the ${ordinal(r.day)} · ${r.months} months</span></span>
       <span class="rec-side"><span class="num">${inr(r.amount)}</span>${badge[r.status]}</span></a></li>`).join('')}</ul>`,
   { note: `About ${inr(total)} a month in ${list.length} regular payment${list.length === 1 ? '' : 's'}${missing ? `; <strong class="bad">${missing} not seen</strong> yet in ${esc(monthLabel(asOf.slice(0, 7)))}` : ''}. Statements up to ${esc(dayLabel(asOf))}.` });
+}
+
+/** Subscriptions and service bills: what each costs a year, when it is next due, and your keep / cancel choice. */
+function subscriptionsPanel(txns: Txn[]): string {
+  const list = subscriptions(txns, app.state.settings.subscriptionMarks ?? {});
+  if (!list.length) return '';
+  const yearly = list.reduce((a, s) => a + s.yearly, 0);
+  const cancel = list.filter((s) => s.mark === 'cancel');
+  const flags = (s: (typeof list)[number]) => [
+    s.chargedAfterCancel ? `<span class="badge warn">Charged ${esc(dayLabel(s.chargedAfterCancel))}, after you chose to cancel</span>` : '',
+    s.change ? `<span class="badge ${s.change.to > s.change.from ? 'warn' : 'ok-badge'}">${s.change.to > s.change.from ? 'Price up' : 'Price down'} ${inr(s.change.from)} → ${inr(s.change.to)} since ${esc(monthShort(s.change.since.slice(0, 7)))}</span>` : '',
+  ].join('');
+  const pick = (s: (typeof list)[number]) => `<span class="sub-pick" role="group" aria-label="Keep or cancel ${esc(s.name)}">
+    <button class="chip-btn ${s.mark === 'keep' ? 'on' : ''}" data-sub-mark="keep" data-sub="${esc(s.key)}" aria-pressed="${s.mark === 'keep'}">Keep</button>
+    <button class="chip-btn ${s.mark === 'cancel' ? 'on bad' : ''}" data-sub-mark="cancel" data-sub="${esc(s.key)}" aria-pressed="${s.mark === 'cancel'}">Plan to cancel</button></span>`;
+  return section('Subscriptions', `<ul class="movements subs">${list.map((s) => `<li class="sub-row">
+      <a href="#txns" data-sub-open="${esc(s.key)}" class="sub-main"><span class="grow"><span class="mv-label">${esc(s.name)}</span>
+        <span class="tiny">${esc(s.category)} · ${s.cycle === 'monthly' ? `${inr(s.latest)} a month` : `${inr(s.latest)} a year`} · next about ${esc(dayLabel(s.nextDue))}</span></span>
+        <span class="rec-side"><span class="num">${inr(s.yearly)}</span><span class="tiny">a year</span></span></a>
+      <div class="sub-foot">${flags(s)}${pick(s)}</div></li>`).join('')}</ul>
+    <p class="tiny" style="margin:8px 0 0">Not sure you still use one? Mark it <strong>Plan to cancel</strong> — if it is charged again after that, it shows here in red.</p>`,
+  { note: `About <strong>${inr(yearly)}</strong> a year (${inr(Math.round(yearly / 12))} a month) in ${list.length} subscription${list.length === 1 ? '' : 's'} and service bill${list.length === 1 ? '' : 's'}${cancel.length ? `; ${cancel.length} you plan to cancel would save ${inr(cancel.reduce((a, s) => a + s.yearly, 0))} a year` : ''}.` });
 }
 
 /** Marks a same-amount pair across two of your accounts as a self transfer (or leaves it be). */
@@ -421,6 +443,7 @@ export function renderDashboard(root: HTMLElement) {
       ${glancePanel(s, txns, prev, spendCats)}
       ${all ? '' : reviewPanel(month, scoped)}
       ${recurringPanel(scoped)}
+      ${subscriptionsPanel(scoped)}
       ${categoryPanel(spendCats, investedCats)}
       ${section('Spend and investment trend', history.length
         ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month)
@@ -463,6 +486,22 @@ export function renderDashboard(root: HTMLElement) {
     const key = el.dataset.recurring!;
     const rows = scoped.filter((t) => t.merchantKey === key && t.direction === 'debit');
     openPicked(rows[0]?.merchantName ?? 'Recurring', rows.map((t) => t.id));
+  }));
+  root.querySelectorAll<HTMLElement>('[data-sub-open]').forEach((el) => el.addEventListener('click', (e) => {
+    e.preventDefault();
+    const rows = scoped.filter((t) => t.merchantKey === el.dataset.subOpen && t.direction === 'debit');
+    openPicked(rows[0]?.merchantName ?? 'Subscription', rows.map((t) => t.id));
+  }));
+  root.querySelectorAll<HTMLElement>('[data-sub-mark]').forEach((b) => b.addEventListener('click', async () => {
+    const key = b.dataset.sub!, mark = b.dataset.subMark as 'keep' | 'cancel';
+    const cur = app.state.settings.subscriptionMarks?.[key];
+    const today = new Date().toISOString().slice(0, 10);
+    await update((st) => {
+      const marks = { ...(st.settings.subscriptionMarks ?? {}) };
+      if (cur?.mark === mark) delete marks[key]; else marks[key] = { mark, at: today };
+      return { ...st, settings: { ...st.settings, subscriptionMarks: marks } };
+    });
+    toast(cur?.mark === mark ? 'Choice cleared' : mark === 'cancel' ? 'Marked to cancel — you will see it here if it is charged again' : 'Marked to keep');
   }));
   root.querySelectorAll<HTMLElement>('[data-pie]').forEach((b) => b.addEventListener('click', () => {
     pieMode = b.dataset.pie as PieMode;

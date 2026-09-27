@@ -168,3 +168,98 @@ export function unpairedTransfers(txns: Txn[], dismissed: string[] = []): Unpair
   }
   return res;
 }
+
+/* ------------------------------------------------------------------ subscriptions */
+
+/** Categories that hold subscriptions and bills for a service (not rent, loans, people or investments). */
+const SUB_CATEGORIES = new Set(['Subscriptions', 'Entertainment', 'Mobile & Internet', 'Bills & Utilities', 'Education', 'Health', 'Personal Care', 'Insurance']);
+/** Payees that are subscriptions whatever category they landed in. */
+const SUB_NAMES = /netflix|spotify|prime|hotstar|jiocinema|jio ?hotstar|youtube|apple\.com|apple ?(music|tv|one)|icloud|google ?(one|play|storage)|zee5|sony ?liv|audible|kindle|microsoft|office ?365|adobe|chatgpt|openai|claude|anthropic|github|linkedin|swiggy ?one|zomato ?gold|cult\.?fit|gym|dropbox|canva|notion|duolingo|times ?prime|economic ?times|hindu|newspaper|playstation|xbox|airtel ?(black|xstream)/i;
+const NOT_SUBS = new Set(['Rent & Housing', 'EMI & Loans', 'Payments to People', 'Family', 'Cash Withdrawal', 'Taxes', 'Gifts & Donations', 'Groceries', 'Food & Dining', 'Fuel', 'Transport']);
+
+export interface Subscription {
+  key: string;
+  name: string;
+  category: string;
+  /** What one payment usually costs, and the latest one. */
+  amount: number;
+  latest: number;
+  cycle: 'monthly' | 'yearly';
+  lastDate: string;
+  /** When the next payment should leave (YYYY-MM-DD). */
+  nextDue: string;
+  yearly: number;
+  payments: number;
+  /** The last payment cost more (or less) than the one before. */
+  change?: { from: number; to: number; since: string };
+  mark?: 'keep' | 'cancel';
+  /** You marked it to cancel, and it was charged again after that. */
+  chargedAfterCancel?: string;
+}
+
+const addMonths = (d: string, n: number) => {
+  const [y, m, day] = d.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  return `${t.getUTCFullYear()}-${String(t.getUTCMonth() + 1).padStart(2, '0')}-${String(Math.min(day, last)).padStart(2, '0')}`;
+};
+const looksLikeSub = (name: string, category: string) => !NOT_SUBS.has(category) && (SUB_CATEGORIES.has(category) || SUB_NAMES.test(name));
+
+/**
+ * Subscriptions and service bills: monthly ones from the recurring payments, and yearly
+ * renewals (the same payee, a similar amount, about a year apart). `marks` are your
+ * Keep / Plan to cancel choices; one charged again after "cancel" is flagged.
+ */
+export function subscriptions(txns: Txn[], marks: Record<string, { mark: 'keep' | 'cancel'; at: string }> = {}, asOf?: string): Subscription[] {
+  const end = asOf ?? txns.reduce((a, t) => (t.date > a ? t.date : a), '');
+  const paid = (key: string) => txns.filter((t) => t.merchantKey === key && t.direction === 'debit' && t.kind === 'spend' && !t.excluded)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const out: Subscription[] = [];
+  const build = (key: string, name: string, category: string, cycle: 'monthly' | 'yearly', amount: number): Subscription => {
+    const list = paid(key);
+    const last = list[list.length - 1];
+    const sub: Subscription = {
+      key, name, category, amount, latest: last.amount, cycle, lastDate: last.date,
+      nextDue: addMonths(last.date, cycle === 'monthly' ? 1 : 12),
+      yearly: Math.round(last.amount * (cycle === 'monthly' ? 12 : 1)), payments: list.length,
+    };
+    // the latest price change within the last few payments ("up from ₹499 since August")
+    const differs = (x: number) => Math.abs(x - last.amount) >= Math.max(1, 0.05 * last.amount);
+    const recent = list.slice(-5);
+    let i = recent.length - 1;
+    while (i > 0 && !differs(recent[i - 1].amount)) i--;
+    if (i > 0) sub.change = { from: recent[i - 1].amount, to: last.amount, since: recent[i].date };
+    const m = marks[key];
+    if (m) {
+      sub.mark = m.mark;
+      if (m.mark === 'cancel') { const after = list.filter((t) => t.date > m.at); if (after.length) sub.chargedAfterCancel = after[after.length - 1].date; }
+    }
+    return sub;
+  };
+  const monthly = new Set<string>();
+  for (const r of recurringPayments(txns, end)) {
+    if (r.kind !== 'spend' || !looksLikeSub(r.name, r.category)) continue;
+    monthly.add(r.key);
+    out.push(build(r.key, r.name, r.category, 'monthly', r.amount));
+  }
+  // yearly renewals: two or more payments 11-13 months apart for about the same amount
+  const byKey = new Map<string, Txn[]>();
+  for (const t of txns) {
+    if (t.direction !== 'debit' || t.kind !== 'spend' || t.excluded || t.accountId === MANUAL || monthly.has(t.merchantKey)) continue;
+    byKey.set(t.merchantKey, [...(byKey.get(t.merchantKey) ?? []), t]);
+  }
+  for (const [key, list] of byKey) {
+    const last = [...list].sort((a, b) => a.date.localeCompare(b.date));
+    const l = last[last.length - 1];
+    if (!looksLikeSub(l.merchantName, l.category) || l.amount < 100) continue;
+    const yearApart = last.some((a) => last.some((b) => {
+      const days = (Date.parse(b.date) - Date.parse(a.date)) / DAY;
+      return days >= 330 && days <= 400 && Math.abs(a.amount - b.amount) <= 0.25 * Math.max(a.amount, b.amount);
+    }));
+    // one payment a month or more often is not a yearly plan
+    if (!yearApart || last.length > 4) continue;
+    if ((Date.parse(end) - Date.parse(l.date)) / DAY > 400) continue;          // stopped
+    out.push(build(key, l.merchantName, l.category, 'yearly', median(last.map((t) => t.amount))));
+  }
+  return out.sort((a, b) => Number(!!b.chargedAfterCancel) - Number(!!a.chargedAfterCancel) || b.yearly - a.yearly);
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { categoryShifts, pairKey, recurringPayments, unpairedTransfers, unusualSpends } from '../src/insights';
+import { categoryShifts, pairKey, recurringPayments, subscriptions, unpairedTransfers, unusualSpends } from '../src/insights';
 import type { Txn } from '../src/types';
 
 let n = 0;
@@ -65,5 +65,37 @@ describe('unpaired transfers', () => {
     const u = unpairedTransfers(rows);
     expect(u.map((p) => [p.out.id, p.in.id])).toEqual([[out.id, inn.id]]);
     expect(unpairedTransfers(rows, [pairKey(inn, out)])).toEqual([]);
+  });
+});
+
+describe('subscriptions', () => {
+  const pay = (key: string, name: string, category: string, date: string, amount: number) => t({ merchantKey: key, merchantName: name, category, date, amount });
+  const rows = [
+    ...['2026-05-12', '2026-06-12', '2026-07-12', '2026-08-12'].map((d, i) => pay('nflx', 'Netflix', 'Entertainment', d, i < 3 ? 499 : 649)),
+    ...['2026-06-03', '2026-07-03', '2026-08-03'].map((d) => pay('jio', 'Jio Fiber', 'Mobile & Internet', d, 1178)),
+    ...['2026-06-01', '2026-07-01', '2026-08-01'].map((d) => pay('rent', 'Landlord', 'Rent & Housing', d, 25000)),        // not a subscription
+    ...['2026-06-05', '2026-07-05', '2026-08-05'].map((d) => pay('gpt', 'OpenAI ChatGPT', 'Shopping', d, 1950)),           // by name
+    pay('prime', 'Amazon Prime', 'Subscriptions', '2025-09-02', 1499), pay('prime', 'Amazon Prime', 'Subscriptions', '2026-09-01', 1499),
+    pay('hotel', 'Taj Hotel', 'Travel', '2025-09-02', 9000), pay('hotel', 'Taj Hotel', 'Travel', '2026-09-01', 9500),     // a trip, not a plan
+  ];
+  it('finds monthly and yearly ones, next due dates, yearly cost and price changes', () => {
+    const s = subscriptions(rows, {}, '2026-09-10');
+    expect(s.map((x) => [x.name, x.cycle, x.nextDue, x.yearly])).toEqual([
+      ['OpenAI ChatGPT', 'monthly', '2026-09-05', 23400],
+      ['Jio Fiber', 'monthly', '2026-09-03', 14136],
+      ['Netflix', 'monthly', '2026-09-12', 7788],
+      ['Amazon Prime', 'yearly', '2027-09-01', 1499],
+    ]);
+    expect(s.find((x) => x.name === 'Netflix')!.change).toEqual({ from: 499, to: 649, since: '2026-08-12' });
+  });
+  it('flags one charged after you marked it to cancel', () => {
+    const s = subscriptions(rows, { jio: { mark: 'cancel', at: '2026-07-10' }, nflx: { mark: 'keep', at: '2026-07-10' } }, '2026-09-10');
+    expect(s[0].name).toBe('Jio Fiber');
+    expect(s[0].chargedAfterCancel).toBe('2026-08-03');
+    expect(s.find((x) => x.name === 'Netflix')!.mark).toBe('keep');
+  });
+  it('the next due date keeps to the end of a short month', () => {
+    const s = subscriptions(['2026-05-31', '2026-06-30', '2026-07-31', '2026-08-31'].map((d) => pay('x', 'Spotify', 'Subscriptions', d, 119)), {}, '2026-09-05');
+    expect(s[0].nextDue).toBe('2026-09-30');
   });
 });

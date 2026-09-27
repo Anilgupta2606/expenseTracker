@@ -105,6 +105,8 @@ export interface Settings {
   categoryCounted?: Record<string, boolean>;
   /** Same-amount pairs across accounts you said are not a self transfer ("idA|idB"). */
   notPairs?: string[];
+  /** What you decided about each subscription (by payee key), and when. */
+  subscriptionMarks?: Record<string, { mark: 'keep' | 'cancel'; at: string }>;
 }
 
 /** Your own numbers for a month. Months without one inherit the latest earlier month. */
