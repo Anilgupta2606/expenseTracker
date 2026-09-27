@@ -1,4 +1,5 @@
 import type { AppState, Txn } from '../types';
+import { aiNames, hasAi } from '../ai/providers';
 import { KIND_LABEL } from '../categorize/categories';
 import { answer, applyPlan, describeAction, planRequest, targets, wouldChange, type AssistantPlan } from '../assistant';
 import { app, navigate, render, toast, update } from './app';
@@ -106,18 +107,18 @@ function entryHtml(e: Entry, i: number): string {
 }
 
 export function renderAssistant(root: HTMLElement) {
-  const hasKey = Boolean(app.state.settings.geminiKey);
+  const hasKey = hasAi(app.state.settings), names = aiNames(app.state.settings);
   root.innerHTML = `
     <h1>Assistant</h1>
     <p class="small muted" style="margin:-6px 0 14px">Ask a question or tell it what to change. Every change is shown first and happens only when you tap Confirm.</p>
-    ${hasKey ? '' : '<div class="card small">The assistant uses your free Gemini key. <button class="link-btn" data-go-settings>Add it in Settings</button></div>'}
+    ${hasKey ? '' : '<div class="card small">The assistant needs a free AI key (Gemini, Groq, Cerebras, Mistral or OpenRouter). <button class="link-btn" data-go-settings>Add one in Settings</button></div>'}
     <div class="as-log">${history.map(entryHtml).join('')}</div>
     ${history.length ? '' : `<div class="chips as-examples">${EXAMPLES.map((x) => `<button class="chip" data-example="${esc(x)}">${esc(x)}</button>`).join('')}</div>`}
     <form class="as-input" autocomplete="off">
       <input type="text" id="as-q" placeholder="e.g. Move all self transfers to not counted" ${hasKey ? '' : 'disabled'} enterkeyhint="send">
       <button class="btn primary" ${hasKey ? '' : 'disabled'}>Send</button>
     </form>
-    <p class="tiny" style="margin:6px 4px">Sent to Google Gemini: your request, category names and payee titles. Amounts, dates, balances and account numbers stay on this device; the app finds the rows and does the maths itself.</p>
+    <p class="tiny" style="margin:6px 4px">Sent to your AI (${esc(names.join(', then ') || 'none set up')}): your request, category names and payee titles. Amounts, dates, balances and account numbers stay on this device; the app finds the rows and does the maths itself.</p>
   `;
   const input = root.querySelector<HTMLInputElement>('#as-q')!;
   root.querySelector('form')!.addEventListener('submit', (ev) => {

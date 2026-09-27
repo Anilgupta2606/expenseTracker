@@ -1,6 +1,7 @@
 import type { AppState, Kind, LearnedRule, Txn } from './types';
 import { CATEGORIES, categoryCounted, categoryKey, defaultCategory, isValidCategory, KIND_LABEL } from './categorize/categories';
-import { AI_KINDS, ALL_CATEGORIES, GeminiSession } from './categorize/gemini';
+import { AI_KINDS, ALL_CATEGORIES } from './categorize/gemini';
+import { aiSession, hasAi } from './ai/providers';
 
 /** Which transactions a request is about. Every field that is set must match. */
 export interface TxnFilter {
@@ -220,9 +221,8 @@ Request: ${JSON.stringify(request)}`;
 }
 
 export async function planRequest(request: string, state: AppState, retryDelay = 2000, today = new Date().toISOString().slice(0, 10)): Promise<AssistantPlan> {
-  const key = state.settings.geminiKey;
-  if (!key) throw new Error('Add your free Gemini API key in Settings first.');
-  const raw = await new GeminiSession(key, retryDelay).generate<{
+  if (!hasAi(state.settings)) throw new Error('Add a free AI key in Settings → AI assistants first.');
+  const raw = await aiSession(state.settings, retryDelay).generate<{
     intent: AssistantPlan['intent']; reply: string; filter?: TxnFilter; remember?: boolean; measure?: Measure | null;
     action?: { type: AssistantAction['type'] | 'none'; counted?: boolean; kind?: Kind; category?: string; title?: string } | null;
   }>(prompt(request, state, today), SCHEMA);

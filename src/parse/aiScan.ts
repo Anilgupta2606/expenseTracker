@@ -1,6 +1,7 @@
 import type { Kind, ParsedTxn, ParseResult, Settings } from '../types';
 import { CATEGORIES, isValidCategory } from '../categorize/categories';
-import { AI_KINDS, ALL_CATEGORIES, GeminiSession } from '../categorize/gemini';
+import { AI_KINDS, ALL_CATEGORIES } from '../categorize/gemini';
+import { aiSession, hasAi } from '../ai/providers';
 import type { Page } from './layout';
 import { round2 } from './util';
 
@@ -149,18 +150,18 @@ function chunks(pages: string[][], maxLines = 220): string[][] {
 }
 
 /**
- * Reads the statement's transactions with Gemini. Only the table text goes
+ * Reads the statement's transactions with the AI (the first service that answers). Only the table text goes
  * out, with numbers and names masked; the balance check happens on the device.
  */
 export async function scanWithGemini(
   pages: Page[], settings: Settings, holderName: string | undefined,
   onProgress?: (done: number, total: number) => void, retryDelay = 2000,
 ): Promise<ParsedTxn[] | null> {
-  if (!settings.geminiKey) return null;
+  if (!hasAi(settings)) return null;
   const table = tableLines(pages);
   if (!table) return null;
   const mask = makeMask([...settings.ownNames, ...settings.familyNames, holderName ?? '']);
-  const session = new GeminiSession(settings.geminiKey, retryDelay);
+  const session = aiSession(settings, retryDelay);
   const parts = chunks(table.map((lines) => lines.map((l) => mask.hide(l))));
   const txns: ParsedTxn[] = [];
   for (let i = 0; i < parts.length; i++) {

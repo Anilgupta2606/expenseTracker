@@ -89,6 +89,12 @@ export interface Settings {
   familyNames: string[];
   /** Free Google Gemini key for the optional AI check (stored on this device only). */
   geminiKey?: string;
+  /** Keys for the other AI services (Groq, Cerebras, Mistral, OpenRouter, Anthropic; Ollama: its address). */
+  aiKeys?: Partial<Record<string, string>>;
+  /** The order the AI services are tried in. */
+  aiOrder?: string[];
+  /** AI services switched off (their keys are kept). */
+  aiOff?: string[];
   /** Your investment plan page, opened from the profile menu. Empty string hides the link. */
   planLink?: string;
   /** @deprecated The app picks the model; kept so old saved data still loads. */
