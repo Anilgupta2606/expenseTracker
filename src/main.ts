@@ -90,6 +90,8 @@ function toggleMenu(anchor: HTMLElement) {
       <div class="pm-head"><span class="avatar-round">${esc(initialsOf(name))}</span><span><span class="tiny">Signed in as</span><strong style="display:block">${esc(name)}</strong></span></div>
       <a href="#settings" class="pm-item" role="menuitem" data-pm-settings>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS.gear}</svg>Settings</a>
+      <a href="https://anilgupta2606.github.io/InvestmentPlan/home.html" class="pm-item" role="menuitem" data-pm-home>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7M5 10v10h14V10"/></svg>Home — all three apps</a>
       ${link ? `<a href="${esc(planOpener(link))}" target="_blank" rel="noopener" class="pm-item" role="menuitem" data-pm-plan>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>Investment plan<span class="pm-ext" aria-label="opens in a new tab">↗</span></a>` : ''}
       <div class="pm-label">Theme</div>
@@ -98,6 +100,7 @@ function toggleMenu(anchor: HTMLElement) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 17l5-5-5-5M20 12H9M12 21H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h7"/></svg>Sign out</button>`;
     menu.querySelector('[data-pm-settings]')!.addEventListener('click', closeMenu);
     menu.querySelector('[data-pm-plan]')?.addEventListener('click', closeMenu);
+    menu.querySelector('[data-pm-home]')?.addEventListener('click', closeMenu);
     menu.querySelector('[data-pm-signout]')!.addEventListener('click', () => { closeMenu(); setSignedIn(false); render(); });
     menu.querySelectorAll<HTMLElement>('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => {
       setTheme(b.dataset.themePick as Theme);
