@@ -4,6 +4,7 @@ import { nameKey } from '../categorize/engine';
 import { hash } from '../parse/util';
 import { app, askConfirm, toast, update } from './app';
 import { esc } from './format';
+import { mountSplitTags, readSplitTags, splitTagsFor } from './splitTags';
 
 export const MANUAL_ACCOUNT = 'MANUAL';
 export const MANUAL_IMPORT = 'manual';
@@ -22,6 +23,8 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
   const [modeFromDesc, ...rest] = (existing?.description ?? '').split(': ');
   const mode = existing && MODES.includes(modeFromDesc) ? modeFromDesc : 'Cash';
   const text = existing ? (rest.length ? rest.join(': ') : existing.description) : '';
+  const st = splitTagsFor(existing);
+  const amountNow = () => parseFloat((backdrop.querySelector<HTMLInputElement>('#m-amount')?.value ?? '').replace(/[^\d.]/g, '')) || 0;
 
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
@@ -57,6 +60,7 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
         <select id="m-cat">${cats.map((c) => `<option ${c === category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
       ${kind === 'investment' || kind === 'transfer' ? `<label class="field"><span>Direction</span>
         <select id="m-dir"><option value="debit" ${vals.dir === 'debit' ? 'selected' : ''}>Money out</option><option value="credit" ${vals.dir === 'credit' ? 'selected' : ''}>Money in${kind === 'investment' ? ' (redeemed)' : ''}</option></select></label>` : ''}
+      <div id="st-box"></div>
       <p class="small bad" id="m-err" hidden></p>
       <div class="row">
         ${existing ? '<button class="btn danger" id="m-del">Delete</button>' : ''}
@@ -65,6 +69,8 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
       </div>
     </div>`;
     backdrop.querySelectorAll<HTMLElement>('[data-k]').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.k as Kind; draw(); }));
+    const split = mountSplitTags(backdrop.querySelector<HTMLElement>('#st-box')!, st, amountNow, () => ({ kind, category }));
+    backdrop.querySelector<HTMLInputElement>('#m-amount')!.addEventListener('input', () => split.refresh());
     backdrop.querySelector<HTMLSelectElement>('#m-cat')!.addEventListener('change', (e) => { category = (e.target as HTMLSelectElement).value; });
     backdrop.querySelector('#m-cancel')!.addEventListener('click', close);
     backdrop.querySelector('#m-del')?.addEventListener('click', async () => {
@@ -81,6 +87,8 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
       const err = backdrop.querySelector<HTMLElement>('#m-err')!;
       if (!(amount > 0)) { err.textContent = 'Enter an amount above zero.'; err.hidden = false; return; }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { err.textContent = 'Pick a date.'; err.hidden = false; return; }
+      const extra = readSplitTags(st, Math.round(amount * 100) / 100);
+      if (extra.error) { err.textContent = extra.error; err.hidden = false; return; }
       const direction = kind === 'income' ? 'credit' : kind === 'spend' || kind === 'cc_bill' ? 'debit'
         : (backdrop.querySelector<HTMLSelectElement>('#m-dir')?.value as 'debit' | 'credit') ?? 'debit';
       const now = Date.now();
@@ -99,6 +107,10 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
         merchantName: what.slice(0, 40),
         importedAt: existing?.importedAt ?? now,
         note: existing?.note,
+        // editing used to drop an unticked Counted; it is kept now
+        ...(existing?.excluded ? { excluded: true } : {}),
+        ...(extra.tags ? { tags: extra.tags } : {}),
+        ...(extra.splits ? { splits: extra.splits } : {}),
       };
       close();
       await update((s) => ({

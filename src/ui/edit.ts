@@ -3,6 +3,7 @@ import { CATEGORIES, categoryCounted, KIND_LABEL } from '../categorize/categorie
 import { detectMethod } from '../categorize/engine';
 import { app, toast, update } from './app';
 import { dayLabel, esc, inrFull, accountLabel } from './format';
+import { mountSplitTags, readSplitTags, splitTagsFor } from './splitTags';
 
 const SOURCE_LABEL: Record<Txn['source'], string> = {
   default: 'Guessed from the payment type',
@@ -19,6 +20,7 @@ export function openEditSheet(t: Txn) {
   let category = t.category;
   let title = t.merchantName;
   let counted = !t.excluded;
+  const st = splitTagsFor(t);
   const similarFor = (k: Kind) => app.state.txns.filter((x) => x.merchantKey === t.merchantKey && x.id !== t.id &&
     (k === 'spend' || k === 'income' ? x.direction === t.direction : true));
   const account = app.state.accounts.find((a) => a.id === t.accountId);
@@ -56,7 +58,9 @@ export function openEditSheet(t: Txn) {
       </label>
       <label class="row small" style="margin-bottom:12px"><input type="checkbox" id="counted" ${counted ? 'checked' : ''}><span>Counted in totals</span></label>
       <label class="field"><span>Note</span><input type="text" id="note" value="${esc(t.note ?? '')}" placeholder="Optional"></label>
-      <p class="tiny" style="margin-top:-4px">${esc(SOURCE_LABEL[t.source])}</p>
+      <div id="st-box"></div>
+      <p class="tiny" style="margin-top:-4px">${esc(SOURCE_LABEL[t.source])}${st.parts ? ' · When split, the totals use the parts; the type above is for this payee\'s rule.' : ''}</p>
+      <p class="small bad" id="e-err" hidden></p>
       <div class="row">
         <button class="btn grow" id="cancel">Cancel</button>
         <button class="btn primary grow" id="save">Save</button>
@@ -77,8 +81,14 @@ export function openEditSheet(t: Txn) {
     backdrop.querySelector<HTMLInputElement>('#counted')!.addEventListener('change', (e) => {
       counted = (e.target as HTMLInputElement).checked;
     });
+    mountSplitTags(backdrop.querySelector<HTMLElement>('#st-box')!, st, () => t.amount, () => ({ kind, category }));
     backdrop.querySelector('#cancel')!.addEventListener('click', close);
     backdrop.querySelector('#save')!.addEventListener('click', async () => {
+      const extra = readSplitTags(st, t.amount);
+      if (extra.error) {
+        const err = backdrop.querySelector<HTMLElement>('#e-err')!;
+        err.textContent = extra.error; err.hidden = false; return;
+      }
       const remember = backdrop.querySelector<HTMLInputElement>('#remember')!.checked;
       const note = backdrop.querySelector<HTMLInputElement>('#note')!.value.trim() || undefined;
       const excluded = !backdrop.querySelector<HTMLInputElement>('#counted')!.checked;
@@ -95,7 +105,7 @@ export function openEditSheet(t: Txn) {
           : s.rules;
         const titled = renamed ? { merchantName: newTitle, titleSet: 'manual' as const } : {};
         const txns = s.txns.map((x) => {
-          if (x.id === t.id) return { ...x, ...titled, kind, category, source: 'manual' as const, note, excluded };
+          if (x.id === t.id) return { ...x, ...titled, kind, category, source: 'manual' as const, note, excluded, tags: extra.tags, splits: extra.splits };
           if (remember && x.merchantKey === t.merchantKey && (!direction || x.direction === direction)) {
             // Types you set by hand on other rows stay; the new title applies to all of them.
             return x.source === 'manual' ? { ...x, ...titled } : { ...x, ...titled, kind, category, source: 'learned' as const };

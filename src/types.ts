@@ -56,9 +56,25 @@ export interface Txn extends ParsedTxn {
   note?: string;
   /** Left out of every total when true (the "Counted" checkbox is unticked). */
   excluded?: boolean;
+  /** One payment counted as several parts (e.g. ₹600 Shopping + ₹400 Groceries); they add up to `amount`. */
+  splits?: SplitPart[];
+  /** Your own labels ("goa trip", "office"), to find and total related spending. */
+  tags?: string[];
+  /** Set only on a part as the totals see it: the id of the split transaction it belongs to. */
+  splitOf?: string;
+  /** Which part this is (0-based), with `splitOf`. */
+  part?: number;
   importedAt: number;
   /** The uploaded statement this row came from. */
   importId: string;
+}
+
+/** One part of a split transaction. */
+export interface SplitPart {
+  amount: number;
+  kind: Kind;
+  category: string;
+  note?: string;
 }
 
 export interface Account {

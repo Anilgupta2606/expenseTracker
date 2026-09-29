@@ -5,6 +5,7 @@ import { bindFilterBar, filterBar } from './dashboard';
 import { openEditSheet } from './edit';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { applyFilters, dayLabel, esc, initials, inrFull, kindVar } from './format';
+import { allTags, expandSplits, parentId } from '../splits';
 
 const KIND_CHIPS: (Kind | 'all' | 'review' | 'excluded')[] = ['all', 'review', 'spend', 'investment', 'cc_bill', 'income', 'transfer', 'excluded'];
 
@@ -70,22 +71,28 @@ async function setKind(id: string, kind: Kind) {
 export function txnRow(t: Txn): string {
   const account = app.state.accounts.find((a) => a.id === t.accountId);
   const review = t.category === 'Uncategorised';
-  return `<div class="txn${t.excluded ? ' ignored' : ''}" data-id="${esc(t.id)}" role="button" tabindex="0">
+  // a part of a split payment: its type is set in the split; Counted is the whole payment's
+  const whole = t.splitOf ? app.state.txns.find((x) => x.id === t.splitOf) : undefined;
+  const id = t.splitOf ?? t.id;
+  return `<div class="txn${t.excluded ? ' ignored' : ''}" data-id="${esc(id)}" role="button" tabindex="0">
     <span class="avatar" style="background:${kindVar(t.kind)}">${esc(initials(t.merchantName))}</span>
     <span class="grow">
       <div class="name ellipsis">${esc(t.merchantName)}</div>
       <div class="meta ellipsis">
         <span class="badge${review ? ' warn' : ''}">${esc(review ? 'Needs category' : t.category)}</span>
+        ${whole ? `<span class="badge split" title="Part ${t.part! + 1} of ${whole.splits!.length} of a ${inrFull(whole.amount)} payment">Split ${t.part! + 1}/${whole.splits!.length}</span>` : ''}
+        ${(t.tags ?? []).map((g) => `<span class="tag">#${esc(g)}</span>`).join('')}
         ${t.accountId === MANUAL_ACCOUNT ? 'Added by hand' : account && app.state.accounts.length > 1 ? esc(account.bank) : ''}
       </div>
     </span>
     <span class="txn-side">
       <span class="num amt ${t.direction}">${t.direction === 'credit' ? '+' : '−'}${inrFull(t.amount)}</span>
       <span class="row" style="gap:6px">
-        <label class="count-box" title="Include in totals"><input type="checkbox" data-counted="${esc(t.id)}" ${t.excluded ? '' : 'checked'}> Counted</label>
-        <select class="counts-as" data-counts="${esc(t.id)}" aria-label="Counts as" title="Counts as">
+        <label class="count-box" title="${whole ? 'Include the whole payment in totals' : 'Include in totals'}"><input type="checkbox" data-counted="${esc(id)}" ${t.excluded ? '' : 'checked'}> Counted</label>
+        ${whole ? `<span class="counts-as split-kind" title="Set in the split - tap the row">${esc(KIND_LABEL[t.kind])}</span>`
+          : `<select class="counts-as" data-counts="${esc(t.id)}" aria-label="Counts as" title="Counts as">
           ${COUNTS_AS.map((c) => `<option value="${c.kind}" ${c.kind === t.kind ? 'selected' : ''}>${c.label}</option>`).join('')}
-        </select>
+        </select>`}
       </span>
     </span>
   </div>`;
@@ -115,7 +122,9 @@ function group(key: string, label: string, list: Txn[], cls: string): string {
 export function renderTransactions(root: HTMLElement) {
   const { state, filters } = app;
   const picked = filters.picked ? new Set(filters.picked.ids) : null;
-  const txns = applyFilters(state.txns, filters).filter((t) => !picked || picked.has(t.id));
+  // A split payment is listed as its parts, each under its own type and category.
+  const txns = applyFilters(expandSplits(state.txns), filters).filter((t) => !picked || picked.has(t.id) || Boolean(t.splitOf && picked.has(t.splitOf)));
+  const tags = allTags(state.txns);
   const byDay = new Map<string, Txn[]>();
   for (const t of txns) byDay.set(t.date, [...(byDay.get(t.date) ?? []), t]);
   // Category groups: biggest money movement first, each with its subtotal.
@@ -138,6 +147,8 @@ export function renderTransactions(root: HTMLElement) {
       ${KIND_CHIPS.map((k) => `<button class="chip${filters.kind === k && !filters.category ? ' on' : ''}" data-kind="${k}">${k === 'all' ? 'All' : k === 'review' ? 'Needs review' : k === 'excluded' ? 'Not counted' : esc(KIND_LABEL[k])}</button>`).join('')}
       ${filters.category ? `<button class="chip on" data-kind="${filters.kind}" data-clear-cat>${esc(filters.category)} ✕</button>` : ''}
     </div>
+    ${tags.length ? `<div class="chips tag-chips">${filters.tag ? `<button class="chip on" data-tag="">#${esc(filters.tag)} ✕</button>`
+      : tags.slice(0, 12).map((g) => `<button class="chip" data-tag="${esc(g.tag)}">#${esc(g.tag)} <span class="tiny">${g.count}</span></button>`).join('')}</div>` : ''}
     <div class="row between small muted wrap" style="margin:0 4px 4px">
       <span>${txns.length} transactions · <span class="num">Out ${inrFull(out)} · In ${inrFull(inn)}</span></span>
       <span class="row" style="gap:8px">
@@ -187,6 +198,10 @@ export function renderTransactions(root: HTMLElement) {
     filters.picked = undefined;
     render();
   });
+  root.querySelectorAll<HTMLElement>('.chip[data-tag]').forEach((el) => el.addEventListener('click', () => {
+    filters.tag = el.dataset.tag ?? '';
+    render();
+  }));
   root.querySelectorAll<HTMLElement>('.chip[data-kind]').forEach((el) => el.addEventListener('click', () => {
     filters.kind = el.dataset.kind as Filters['kind'];
     filters.category = '';
@@ -201,7 +216,7 @@ type Filters = typeof app.filters;
 export function bindTxnRows(root: HTMLElement) {
   root.querySelectorAll<HTMLElement>('.txn[data-id]').forEach((el) => {
     const open = () => {
-      const t = app.state.txns.find((x) => x.id === el.dataset.id);
+      const t = app.state.txns.find((x) => x.id === parentId(el.dataset.id!));
       if (t) (t.accountId === MANUAL_ACCOUNT ? openManualSheet(t) : openEditSheet(t));
     };
     el.addEventListener('click', (e) => { if (!(e.target as HTMLElement).closest('.counts-as, .count-box')) open(); });

@@ -6,6 +6,8 @@ export interface Filters {
   account: string; // 'all' or account id
   kind: Kind | 'all' | 'review' | 'excluded';
   category: string; // '' = any
+  /** Only transactions with this tag; '' = any. */
+  tag?: string;
   search: string;
   groupBy: 'date' | 'category';
   /** Months shown in the charts: 6, 12 or 0 for all. */

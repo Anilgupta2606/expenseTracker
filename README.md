@@ -11,6 +11,8 @@ A private expense tracker that runs in your phone's browser. Upload a bank state
 - has a **Counts as** menu on every transaction (Spending, Investment, Income, Self transfer, Card bill) and a **Counted** checkbox: the app picks the type automatically, you can override it, and untick Counted to leave a row out of all totals;
 - counts **credit card bill payments as spending** by default (untick Counted on a bill if you track that card's spends separately);
 - lets you add transactions by hand (cash, or any future-dated spend) and edit or delete them later;
+- **splits a transaction** into parts - one ₹1,000 Amazon order as ₹600 Shopping + ₹400 Groceries, or part spending and part investment. Tap the row → *Split this amount…*; the parts must add up to the payment. Every total (Overview, plan, categories, alerts, AI review, Ledger export, Assistant answers) counts the parts; the list shows each part under its own category, marked *Split 1/2*. Counted stays one switch for the whole payment;
+- **tags** on any transaction (*goa trip*, *office*): type them in the Tags field of the transaction (commas between tags). Tap a tag chip on Transactions to see only those, search `#goa`, see money per tag in the **Tags** panel on the Overview, or ask the Assistant ("how much did the goa trip cost?");
 - groups transactions by date or by category;
 - keeps a list of uploaded statements with a balance check for each; **Rescan** reads a statement again with several settings and adds any rows that were missed, and **Delete** removes it with its transactions.
 
@@ -77,6 +79,7 @@ Code map:
 
 - `src/parse/layout.ts` — turns positioned PDF text into table rows (column detection, wrapped narrations, balance-based direction check).
 - `src/parse/sheet.ts` — Excel/CSV header detection.
+- `src/splits.ts` — split transactions (the parts every total sees) and tags; `src/ui/splitTags.ts` — the Tags field and split editor in both transaction sheets.
 - `src/categorize/rules.ts` — keyword rules; `engine.ts` — categorisation order, merchant extraction, transfer pairing; `src/plans.ts` — monthly plans, carry-forward and saved/overspent maths.
 - `src/ui/` — screens (Overview, Transactions, Upload, Settings).
 

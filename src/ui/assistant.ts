@@ -2,6 +2,7 @@ import type { AppState, Txn } from '../types';
 import { aiNames, hasAi } from '../ai/providers';
 import { KIND_LABEL } from '../categorize/categories';
 import { answer, applyPlan, describeAction, planRequest, targets, wouldChange, type AssistantPlan } from '../assistant';
+import { expandSplits } from '../splits';
 import { app, navigate, render, toast, update } from './app';
 import { dayLabel, esc, inr, inrFull } from './format';
 
@@ -62,7 +63,8 @@ function entryHtml(e: Entry, i: number): string {
     return `${you}<div class="as-bot bad">${esc(e.error ?? 'Something went wrong.')}${/Settings/.test(e.error ?? '') ? ' <button class="link-btn" data-go-settings>Open Settings</button>' : ''}</div>`;
   }
   const plan = e.plan!;
-  const byId = new Map(app.state.txns.map((t) => [t.id, t]));
+  // answers can hold the parts of a split payment; changes hold whole transactions
+  const byId = new Map([...app.state.txns, ...expandSplits(app.state.txns)].map((t) => [t.id, t]));
   const rows = (e.ids ?? []).map((id) => byId.get(id)).filter((t): t is Txn => Boolean(t));
   let body = `<p style="margin:0 0 8px">${esc(plan.reply || 'Here you go.')}</p>`;
 
@@ -136,7 +138,7 @@ export function renderAssistant(root: HTMLElement) {
   root.querySelectorAll<HTMLElement>('[data-open-txns]').forEach((b) => b.addEventListener('click', () => {
     const e = history[Number(b.dataset.openTxns)];
     // Show exactly the answer's rows: clear the other filters so none are hidden.
-    Object.assign(app.filters, { month: 'all', account: 'all', kind: 'all', category: '', search: '', picked: { label: e.request.length > 40 ? `${e.request.slice(0, 38)}…` : e.request, ids: e.ids ?? [] } });
+    Object.assign(app.filters, { month: 'all', account: 'all', kind: 'all', category: '', tag: '', search: '', picked: { label: e.request.length > 40 ? `${e.request.slice(0, 38)}…` : e.request, ids: e.ids ?? [] } });
     navigate('#txns');
   }));
   root.querySelectorAll<HTMLElement>('[data-cancel]').forEach((b) => b.addEventListener('click', () => {

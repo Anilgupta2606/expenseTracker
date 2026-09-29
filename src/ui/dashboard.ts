@@ -4,6 +4,7 @@ import { app, navigate, render, toast, update } from './app';
 import { aiMonthReview, cachedReview } from '../monthReview';
 import { hasAi } from '../ai/providers';
 import { buildLedgerExport } from '../ledgerExport';
+import { expandSplits, tagTotals } from '../splits';
 import { categoryCounted } from '../categorize/categories';
 import { categoryShifts, pairKey, recurringPayments, spendAlerts, subscriptions, unpairedTransfers, unusualSpends, type SpendAlert, type UnpairedTransfer } from '../insights';
 import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthPoint } from './charts';
@@ -68,6 +69,18 @@ function section(title: string, body: string, opts: { note?: string; action?: st
     <header class="panel-head"><div><h2>${esc(title)}</h2>${opts.note ? `<p class="panel-note">${opts.note}</p>` : ''}</div>${opts.action ?? ''}</header>
     ${body}
   </section>`;
+}
+
+/** Money per tag for the month on screen (or all time); a tag opens its transactions. */
+function tagsPanel(txns: Txn[], all: boolean): string {
+  const rows = tagTotals(txns);
+  if (!rows.length && !app.state.txns.some((t) => t.tags?.length)) return '';
+  return section('Tags', rows.length ? `<table class="simple data">
+      <thead><tr><th>Tag</th><th class="r">Spent</th><th class="r">Invested</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><td><a href="#txns" data-kind="all" data-tag="${esc(r.tag)}">#${esc(r.tag)}</a> <span class="tiny">· ${r.count}</span></td>
+        <td class="num r">${r.spent ? inr(r.spent) : '—'}</td><td class="num r">${r.invested ? inr(r.invested) : '—'}</td></tr>`).join('')}</tbody>
+    </table>` : `<p class="muted small">No tagged transactions ${all ? 'yet' : 'this month'}.</p>`,
+  { note: 'Add tags on any transaction (tap it). Spent is net of refunds; rows not counted are left out.' });
 }
 
 function meter(actual: number, expected: number, color: string): string {
@@ -304,8 +317,10 @@ function openPairsSheet(pairs: UnpairedTransfer[]) {
  * clipboard is refused, the text is shown ready to copy by hand.
  */
 async function copyForLedger() {
-  const text = JSON.stringify(buildLedgerExport(app.state.txns));
-  const months = buildLedgerExport(app.state.txns).months.length;
+  // a split payment's investment part counts; its other parts do not
+  const ledger = buildLedgerExport(expandSplits(app.state.txns));
+  const text = JSON.stringify(ledger);
+  const months = ledger.months.length;
   try {
     await navigator.clipboard.writeText(text);
     toast(`Copied ${months} month${months === 1 ? '' : 's'} of investments. Paste it on the Ledger's Overview.`);
@@ -432,7 +447,9 @@ export function renderDashboard(root: HTMLElement) {
   const older = all ? undefined : months[idx + 1];
 
   // The Overview follows only the account picker; search and type chips belong to the Transactions list.
-  const scoped = applyFilters(state.txns, { ...filters, month: 'all', search: '' }, { kind: false });
+  // Totals see a split payment as its parts; subscriptions and repeat payments look at whole payments.
+  const whole = applyFilters(state.txns, { ...filters, month: 'all', search: '', tag: '' }, { kind: false });
+  const scoped = expandSplits(whole);
   const allMonths = [...months].reverse();
   const inRange = filters.range ? allMonths.slice(-filters.range) : allMonths;
   const history = inRange.map((m) => summarize(state, m, scoped));
@@ -496,9 +513,10 @@ export function renderDashboard(root: HTMLElement) {
       ${budgetPanel(s)}
       ${glancePanel(s, txns, prev, spendCats)}
       ${all ? '' : reviewPanel(month, scoped)}
-      ${recurringPanel(scoped)}
-      ${subscriptionsPanel(scoped)}
+      ${recurringPanel(whole)}
+      ${subscriptionsPanel(whole)}
       ${categoryPanel(spendCats, investedCats)}
+      ${tagsPanel(txns, all)}
       ${section('Spend and investment trend', history.length
         ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month)
         : '<p class="muted small">No data yet.</p>', { note: `Showing ${history.length} of ${allMonths.length} month${allMonths.length === 1 ? '' : 's'}. Tap a month to open it.`, action: rangeToggle() })}
@@ -519,7 +537,7 @@ export function renderDashboard(root: HTMLElement) {
         <tbody>${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}">${esc(c.category)}</a></td><td class="num r">${signed(c.total)}</td></tr>`).join('')}</tbody>
       </table>
       <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>` : '<p class="muted small">No investments here.</p>',
-        { action: state.txns.some((t) => t.kind === 'investment') ? '<button class="btn small-btn" data-ledger-copy title="Copy every month\'s investment totals to paste into your 16-Year Ledger">Copy for Ledger</button>' : '' })}
+        { action: scoped.some((t) => t.kind === 'investment') ? '<button class="btn small-btn" data-ledger-copy title="Copy every month\'s investment totals to paste into your 16-Year Ledger">Copy for Ledger</button>' : '' })}
     </div>
 
     ${section('Monthly history', historyTable(history), { action: rangeToggle() })}
@@ -585,6 +603,7 @@ export function renderDashboard(root: HTMLElement) {
       e.preventDefault();
       filters.kind = el.dataset.kind as Kind | 'review';
       filters.category = el.dataset.category ?? '';
+      filters.tag = el.dataset.tag ?? '';
       navigate('#txns');
     };
     el.addEventListener('click', go);

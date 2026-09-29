@@ -2,6 +2,7 @@ import type { AppState, Kind, LearnedRule, Txn } from './types';
 import { CATEGORIES, categoryCounted, categoryKey, defaultCategory, isValidCategory, KIND_LABEL } from './categorize/categories';
 import { AI_KINDS, ALL_CATEGORIES } from './categorize/gemini';
 import { aiSession, hasAi } from './ai/providers';
+import { allTags, expandSplits, normTag } from './splits';
 
 /** Which transactions a request is about. Every field that is set must match. */
 export interface TxnFilter {
@@ -18,6 +19,8 @@ export interface TxnFilter {
   maxAmount?: number;
   banks?: string[];
   counted?: boolean;
+  /** Your own tags; a row with any of them matches. */
+  tags?: string[];
 }
 
 export type AssistantAction =
@@ -47,7 +50,7 @@ export function matchFilter(t: Txn, f: TxnFilter, state: Pick<AppState, 'account
   const byPayee = f.payees?.length ? f.payees.map(lower).includes(lower(t.merchantName)) : undefined;
   let byText: boolean | undefined;
   if (f.text?.trim()) {
-    const hay = lower(`${t.merchantName} ${t.description} ${t.note ?? ''}`);
+    const hay = lower(`${t.merchantName} ${t.description} ${t.note ?? ''} ${(t.tags ?? []).join(' ')}`);
     byText = f.text.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
   }
   if ((byPayee !== undefined || byText !== undefined) && !byPayee && !byText) return false;
@@ -61,6 +64,7 @@ export function matchFilter(t: Txn, f: TxnFilter, state: Pick<AppState, 'account
     if (!f.banks.map(lower).includes(lower(bank))) return false;
   }
   if (f.counted != null && !t.excluded !== f.counted) return false;
+  if (f.tags?.length && !f.tags.map(normTag).some((g) => t.tags?.includes(g))) return false;
   return true;
 }
 
@@ -68,7 +72,10 @@ export function matchFilter(t: Txn, f: TxnFilter, state: Pick<AppState, 'account
 export function targets(state: AppState, plan: AssistantPlan): Txn[] {
   const a = plan.action;
   if (a?.type === 'category_counted') return state.txns.filter((t) => t.kind === a.kind && t.category === a.category);
-  return state.txns.filter((t) => matchFilter(t, plan.filter, state));
+  // A question is answered from what the totals see - a split payment as its parts. A change
+  // applies to whole transactions; a new type is not given to a split one (its parts have theirs).
+  if (plan.intent === 'question') return expandSplits(state.txns).filter((t) => matchFilter(t, plan.filter, state));
+  return state.txns.filter((t) => matchFilter(t, plan.filter, state) && !(a?.type === 'set_type' && t.splits?.length));
 }
 
 /** Applies a previewed change to exactly these rows. */
@@ -156,6 +163,7 @@ const SCHEMA = {
         maxAmount: { type: 'NUMBER' },
         banks: { type: 'ARRAY', items: { type: 'STRING' } },
         counted: { type: 'BOOLEAN' },
+        tags: { type: 'ARRAY', items: { type: 'STRING' } },
       },
     },
     action: {
@@ -182,11 +190,12 @@ export function assistantContext(state: AppState) {
   const payees = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 400).map(([n]) => n);
   const banks = [...new Set(state.accounts.map((a) => a.bank))];
   const months = [...new Set(state.txns.map((t) => t.date.slice(0, 7)))].sort();
-  return { payees, banks, months };
+  const tags = allTags(state.txns).slice(0, 100).map((g) => g.tag);
+  return { payees, banks, months, tags };
 }
 
 function prompt(request: string, state: AppState, today: string): string {
-  const { payees, banks, months } = assistantContext(state);
+  const { payees, banks, months, tags } = assistantContext(state);
   return `You turn a request typed into a personal expense tracker (Indian rupees) into a filter plus either a change or a question. The app then finds the matching transactions itself and shows them to the user before changing anything.
 
 Today is ${today}. Months with data: ${months.join(', ') || 'none'}.
@@ -194,11 +203,12 @@ Types (kinds) and their categories:
 ${AI_KINDS.map((k) => `  ${k} (${KIND_LABEL[k]}): ${CATEGORIES[k].join(', ')}`).join('\n')}
 Banks: ${banks.join(', ') || 'none'}${state.txns.some((t) => t.accountId === 'MANUAL') ? ', Cash' : ''}
 Payee titles in the app: ${JSON.stringify(payees)}
+Tags in the app: ${JSON.stringify(tags)}
 
 Return:
 - intent: "change" to modify transactions, "question" to answer from the data, "unclear" if you can't tell (then ask in reply).
 - reply: one short friendly sentence saying what you understood (e.g. "Marking all self transfers as not counted."). Never invent numbers; the app computes them.
-- filter: only the fields the request implies. payees must be copied exactly from the payee list (pick every title that fits, e.g. all spellings of a person). Use text for words to find in narrations when no payee fits. Dates as YYYY-MM-DD ("August" means the most recent August with data). direction "debit" = money out, "credit" = money in. counted: true/false only if the request mentions counted / not counted rows.
+- filter: only the fields the request implies. payees must be copied exactly from the payee list (pick every title that fits, e.g. all spellings of a person). Use text for words to find in narrations when no payee fits. Dates as YYYY-MM-DD ("August" means the most recent August with data). direction "debit" = money out, "credit" = money in. counted: true/false only if the request mentions counted / not counted rows. tags: copied exactly from the tag list when the request names one ("the goa trip", "#office").
 - action (for changes):
   - set_counted with counted true/false: include or leave out of totals ("move to not counted", "don't count", "exclude").
   - set_type with kind and a category valid for that kind: change type/category ("mark as investment", "these are groceries").
@@ -247,6 +257,7 @@ export function sanitize(raw: {
   if (Number.isFinite(f.maxAmount)) filter.maxAmount = f.maxAmount;
   if (f.banks?.length) filter.banks = f.banks;
   if (typeof f.counted === 'boolean') filter.counted = f.counted;
+  if (f.tags?.length) { const tags = [...new Set(f.tags.map(normTag).filter(Boolean))]; if (tags.length) filter.tags = tags; }
   // Answers leave out what doesn't count (e.g. self transfers) unless you ask about those rows.
   if (raw.intent === 'question' && filter.counted === undefined) filter.counted = true;
   if (!filter.direction && raw.intent === 'question') {

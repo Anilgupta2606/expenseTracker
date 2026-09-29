@@ -1,6 +1,7 @@
 import { bindSyncCard, syncCard } from './syncUi';
 import type { AppState, Kind } from '../types';
 import { CATEGORIES, categoryCounted, categoryKey, KIND_LABEL } from '../categorize/categories';
+import { expandSplits } from '../splits';
 import { recategorizeAll } from '../importer';
 
 const aiStatus: Partial<Record<string, { ok: boolean; text: string }>> = {};
@@ -94,9 +95,12 @@ function download(name: string, type: string, body: string) {
 
 function toCsv(state: AppState): string {
   const q = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const rows = [['Date', 'Account', 'Name', 'Type', 'Category', 'Direction', 'Amount', 'Balance', 'Narration', 'Note']];
-  for (const t of state.txns) {
-    rows.push([t.date, t.accountId, t.merchantName, t.kind, t.category, t.direction, String(t.amount), String(t.balance ?? ''), t.description, t.note ?? '']);
+  const rows = [['Date', 'Account', 'Name', 'Type', 'Category', 'Direction', 'Amount', 'Balance', 'Narration', 'Note', 'Split part', 'Tags']];
+  // a split payment is one line per part (its amount, type and category), marked "1 of 2" and so on
+  const parts = new Map(state.txns.map((t) => [t.id, t.splits?.length ?? 0]));
+  for (const t of expandSplits(state.txns)) {
+    rows.push([t.date, t.accountId, t.merchantName, t.kind, t.category, t.direction, String(t.amount), String(t.balance ?? ''), t.description, t.note ?? '',
+      t.splitOf ? `${t.part! + 1} of ${parts.get(t.splitOf)}` : '', (t.tags ?? []).join('; ')]);
   }
   return rows.map((r) => r.map(q).join(',')).join('\n');
 }

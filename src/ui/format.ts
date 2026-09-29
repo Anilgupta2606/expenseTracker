@@ -38,7 +38,9 @@ export function applyFilters(txns: Txn[], f: Filters, opts: { kind?: boolean } =
     (f.account === 'all' || t.accountId === f.account) &&
     (!opts.kind || f.kind === 'all' || (f.kind === 'review' ? t.category === 'Uncategorised' : f.kind === 'excluded' ? Boolean(t.excluded) : t.kind === f.kind)) &&
     (!opts.kind || !f.category || t.category === f.category) &&
-    (!q || t.description.toLowerCase().includes(q) || t.merchantName.toLowerCase().includes(q) || t.category.toLowerCase().includes(q) || String(t.amount).includes(q)),
+    (!f.tag || Boolean(t.tags?.includes(f.tag))) &&
+    (!q || t.description.toLowerCase().includes(q) || t.merchantName.toLowerCase().includes(q) || t.category.toLowerCase().includes(q) || String(t.amount).includes(q)
+      || (t.note ?? '').toLowerCase().includes(q) || Boolean(t.tags?.some((g) => g.includes(q.replace(/^#/, ''))))),
   );
 }
 
