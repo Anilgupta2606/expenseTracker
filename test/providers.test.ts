@@ -77,7 +77,7 @@ describe('falling back to the next service', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.includes('googleapis') ? gemOk({ rows: [3] }) : oaiOk('{"rows":[9]}'))));
     const s = new AiSession(settings({ geminiKey: 'g', aiKeys: { groq: 'q' } }), 0);
     expect(await s.generate('p', SCHEMA)).toEqual({ rows: [3] });
-    expect(s.last).toEqual({ provider: 'gemini', model: 'gemini-flash-latest' });
+    expect(s.last).toEqual({ provider: 'gemini', model: 'gemini-flash-latest', name: 'Google Gemini' });
   });
 });
 
@@ -115,7 +115,25 @@ describe('picking the best model', () => {
     }));
     const s = new AiSession(settings({ aiKeys: { groq: 'q-best' } }), 0);
     expect(await s.generate('p', SCHEMA)).toEqual({ rows: [4] });
-    expect(s.last).toEqual({ provider: 'groq', model: 'openai/gpt-oss-120b' });
+    expect(s.last).toEqual({ provider: 'groq', model: 'openai/gpt-oss-120b', name: 'Groq' });
     void hit;
+  });
+});
+
+describe('the shared engine (Money Home /ai/ai.js)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); try { localStorage.clear(); } catch { /* none */ } });
+  it('hands the question to it when it is on the page and Setup is shared', async () => {
+    const store: Record<string, string> = { 'money-ai': '{"keys":{"webllm":"Qwen3-4B"}}' };
+    vi.stubGlobal('localStorage', { getItem: (k: string) => store[k] ?? null, setItem: (k: string, v: string) => { store[k] = v; }, removeItem: (k: string) => { delete store[k]; }, clear: () => {} });
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    const generate = vi.fn(async () => ({ data: { rows: [7] }, id: 'webllm', provider: 'Private AI (in this browser)', model: 'Qwen3-4B' }));
+    vi.stubGlobal('MoneyAI', { generate, aiAvailable: () => true, aiNames: () => ['Private AI (in this browser)'] });
+    const s = new AiSession(emptyState().settings, 0);                         // no key of its own: the hub's AI answers
+    expect(hasAi(emptyState().settings)).toBe(true);
+    expect(await s.generate('p', SCHEMA)).toEqual({ rows: [7] });
+    expect(generate).toHaveBeenCalledWith('p', SCHEMA);
+    expect(s.last).toEqual({ provider: 'webllm', model: 'Qwen3-4B', name: 'Private AI (in this browser)' });
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

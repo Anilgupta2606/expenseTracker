@@ -1,5 +1,5 @@
 import type { AppState, Txn } from './types';
-import { aiSession, hasAi, providerInfo } from './ai/providers';
+import { aiSession, hasAi } from './ai/providers';
 import { summarize } from './plans';
 import { recurringPayments, spendAlerts, subscriptions } from './insights';
 
@@ -92,7 +92,7 @@ export async function aiMonthReview(state: AppState, month: string, txns?: Txn[]
   const clean = (xs: unknown, n: number) => (Array.isArray(xs) ? xs : []).map((x) => String(x ?? '').trim()).filter(Boolean).slice(0, n).map((x) => x.slice(0, 300));
   const review = { headline: String(raw.headline ?? '').trim().slice(0, 300), points: clean(raw.points, 5), watch: clean(raw.watch, 3) };
   if (!review.headline && !review.points.length) throw new Error('The AI returned an empty review. Try again.');
-  const model = session.last ? `${providerInfo(session.last.provider).name} · ${session.last.model}` : '';
+  const model = session.last ? `${session.last.name ?? session.last.provider} · ${session.last.model}` : '';
   try {
     const c = readCache(); c[month] = { sig: sigOf(data), at: Date.now(), model, review };
     const keep = Object.keys(c).sort().slice(-12); localStorage.setItem(CACHE, JSON.stringify(Object.fromEntries(keep.map((k) => [k, c[k]]))));

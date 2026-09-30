@@ -61,9 +61,8 @@ export function hubAi(): Hub {
 /** On the site with Money Home's Setup (or once Setup has been used in this browser), the keys and the first
  *  choice are set there, once for every app; a copy elsewhere keeps its own. */
 export function sharedSetup(): boolean {
-  try {
-    return /(^|\.)anilgupta2606\.github\.io$/.test(location.hostname) || !!localStorage.getItem('money-setup') || !!localStorage.getItem('money-ai');
-  } catch { return false; }
+  try { if (/(^|\.)anilgupta2606\.github\.io$/.test(location.hostname)) return true; } catch { /* no page address (tests) */ }
+  try { return !!localStorage.getItem('money-setup') || !!localStorage.getItem('money-ai'); } catch { return false; }
 }
 
 /** With the shared Setup its key wins (so a key changed there is used here at once); otherwise the one typed here. */
@@ -84,8 +83,8 @@ export function orderOf(s: Settings): ProviderId[] {
 export const isOn = (s: Settings, id: ProviderId) => !(s.aiOff ?? []).includes(id);
 /** Services that can answer: switched on and with a key (Ollama: an address). */
 export const usable = (s: Settings) => orderOf(s).filter((id) => isOn(s, id) && Boolean(keyOf(s, id)));
-export const hasAi = (s: Settings) => usable(s).length > 0;
-export const aiNames = (s: Settings) => usable(s).map((id) => providerInfo(id).name);
+export const hasAi = (s: Settings) => { const hub = centralAi(); return hub?.aiAvailable ? hub.aiAvailable() : usable(s).length > 0; };
+export const aiNames = (s: Settings) => { const hub = centralAi(); return hub?.aiNames ? hub.aiNames() : usable(s).map((id) => providerInfo(id).name); };
 
 /* ------------------------------------------------------------------ resting (yellow) */
 
@@ -295,7 +294,21 @@ export const pinnedModel = (s: Settings, id: ProviderId) => { const m = s.aiMode
 
 /* ------------------------------------------------------------------ the session */
 
-export interface AiAnswerInfo { provider: ProviderId; model: string }
+export interface AiAnswerInfo { provider: ProviderId | string; model: string; name?: string }
+
+/** The site's shared AI engine (Money Home's /ai/ai.js, loaded by index.html): one fallback order, one set of
+ *  free-limit rests and the Private AI for every app. Used whenever it is on the page and Setup is shared. */
+interface CentralAi {
+  generate(prompt: string, schema: object, opts?: object): Promise<{ data: unknown; id: string; provider: string; model: string }>;
+  aiAvailable?: () => boolean;
+  aiNames?: () => string[];
+}
+export function centralAi(): CentralAi | null {
+  try {
+    const m = (globalThis as unknown as { MoneyAI?: CentralAi }).MoneyAI;
+    return m && typeof m.generate === 'function' && sharedSetup() ? m : null;
+  } catch { return null; }
+}
 
 /**
  * Sends prompts to the first service that answers. Keeps using the service and model that
@@ -322,6 +335,13 @@ export class AiSession {
   }
 
   async generate<T>(prompt: string, schema: object): Promise<T> {
+    // the shared engine answers when it is here: the same AI, order and limits as the other apps
+    const hub = centralAi();
+    if (hub) {
+      const r = await hub.generate(prompt, schema);
+      this.last = { provider: r.id, model: r.model, name: r.provider };
+      return r.data as T;
+    }
     const order = usable(this.settings);
     if (!order.length) throw new Error('Add a free AI key in Settings → AI assistants first.');
     let lastError: unknown = null;
@@ -342,7 +362,7 @@ export class AiSession {
             out = await this.ask<T>(id, key, model, prompt, schema);
           }
           this.chosen.set(id, model);
-          this.last = { provider: id, model };
+          this.last = { provider: id, model, name: providerInfo(id).name };
           wake(id);
           return out;
         } catch (e) {
