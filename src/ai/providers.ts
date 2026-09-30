@@ -52,15 +52,24 @@ export class AiUnavailable extends Error {
 
 /* ------------------------------------------------------------------ keys and order */
 
+/** The site's AI hub (Money Home → AI, the same browser): keys and "which AI goes first" shared by all the apps. */
+interface Hub { keys?: Partial<Record<string, string>>; first?: string; fallback?: boolean }
+export function hubAi(): Hub {
+  try { return JSON.parse(localStorage.getItem('money-ai') || '{}') as Hub; } catch { return {}; }
+}
+
+/** A key typed here wins; otherwise the AI hub's. */
 export function keyOf(s: Settings, id: ProviderId): string | undefined {
-  if (id === 'gemini') return s.geminiKey || s.aiKeys?.gemini;
-  const k = s.aiKeys?.[id];
+  const own = id === 'gemini' ? s.geminiKey || s.aiKeys?.gemini : s.aiKeys?.[id];
+  const k = own && own.trim() ? own : hubAi().keys?.[id];
   return k && k.trim() ? k.trim() : undefined;
 }
-/** The services in your order, then any not yet ordered. */
+/** The services in your order, then any not yet ordered. With no order of your own, the hub's first choice leads. */
 export function orderOf(s: Settings): ProviderId[] {
   const known = PROVIDERS.map((p) => p.id);
-  const saved = (s.aiOrder ?? []).filter((x): x is ProviderId => known.includes(x as ProviderId));
+  let saved = (s.aiOrder ?? []).filter((x): x is ProviderId => known.includes(x as ProviderId));
+  const first = hubAi().first as ProviderId | undefined;
+  if (!saved.length && first && known.includes(first)) saved = [first];
   return [...saved, ...known.filter((x) => !saved.includes(x))];
 }
 export const isOn = (s: Settings, id: ProviderId) => !(s.aiOff ?? []).includes(id);
