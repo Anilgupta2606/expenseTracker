@@ -58,18 +58,27 @@ export function hubAi(): Hub {
   try { return JSON.parse(localStorage.getItem('money-ai') || '{}') as Hub; } catch { return {}; }
 }
 
-/** A key typed here wins; otherwise the AI hub's. */
+/** On the site with Money Home's Setup (or once Setup has been used in this browser), the keys and the first
+ *  choice are set there, once for every app; a copy elsewhere keeps its own. */
+export function sharedSetup(): boolean {
+  try {
+    return /(^|\.)anilgupta2606\.github\.io$/.test(location.hostname) || !!localStorage.getItem('money-setup') || !!localStorage.getItem('money-ai');
+  } catch { return false; }
+}
+
+/** With the shared Setup its key wins (so a key changed there is used here at once); otherwise the one typed here. */
 export function keyOf(s: Settings, id: ProviderId): string | undefined {
   const own = id === 'gemini' ? s.geminiKey || s.aiKeys?.gemini : s.aiKeys?.[id];
-  const k = own && own.trim() ? own : hubAi().keys?.[id];
+  const hub = hubAi().keys?.[id];
+  const k = sharedSetup() ? (hub && hub.trim() ? hub : own) : (own && own.trim() ? own : hub);
   return k && k.trim() ? k.trim() : undefined;
 }
-/** The services in your order, then any not yet ordered. With no order of your own, the hub's first choice leads. */
+/** The services in order: the one picked first in Setup leads, then your order here, then any not yet ordered. */
 export function orderOf(s: Settings): ProviderId[] {
   const known = PROVIDERS.map((p) => p.id);
   let saved = (s.aiOrder ?? []).filter((x): x is ProviderId => known.includes(x as ProviderId));
   const first = hubAi().first as ProviderId | undefined;
-  if (!saved.length && first && known.includes(first)) saved = [first];
+  if (first && known.includes(first) && (sharedSetup() || !saved.length)) saved = [first, ...saved.filter((x) => x !== first)];
   return [...saved, ...known.filter((x) => !saved.includes(x))];
 }
 export const isOn = (s: Settings, id: ProviderId) => !(s.aiOff ?? []).includes(id);

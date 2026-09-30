@@ -1,6 +1,7 @@
 import { forgetSync, markLocalChange, saveSyncConfig, syncConfig, syncNow, type SyncResult } from '../sync';
 import { app, onChange, render, toast, update } from './app';
 import { esc } from './format';
+import { sharedSetup } from '../ai/providers';
 
 const MESSAGES: Record<SyncResult, string> = {
   pushed: 'Synced: this device’s data is saved for your other devices.',
@@ -64,6 +65,13 @@ export function syncCard(): string {
       ${cfg.lastError ? `<p class="small bad">${esc(cfg.lastError)}</p>` : ''}
       <div class="row wrap"><button class="btn primary" id="sync-now" ${busy ? 'disabled' : ''}>Sync now</button><button class="btn danger" id="sync-off">Turn off on this device</button></div>
       <p class="tiny" style="margin-top:8px">Uploaded statement files stay on the device that read them; their transactions sync.</p>
+    </div>`;
+  }
+  if (sharedSetup()) {
+    return `<div class="card" id="sync-card">
+      <h2>Sync between devices</h2>
+      <p class="small muted" style="margin-top:-4px">Off on this device. Turn it on once for all your apps in Money Home → Setup (a GitHub token and a passphrase); this app then syncs by itself, encrypted.</p>
+      <a class="btn primary" href="/setup/#sync">Turn on sync in Setup</a>
     </div>`;
   }
   return `<div class="card" id="sync-card">

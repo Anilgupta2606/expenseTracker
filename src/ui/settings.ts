@@ -12,7 +12,7 @@ import { checkLogin, usernameOf, withCredentials } from '../auth';
 import { app, askConfirm, render, toast, update } from './app';
 import { esc, kindVar, accountLabel } from './format';
 import { DEFAULT_PLAN_LINK } from '../links';
-import { isOn, keyOf, knownModels, listModels, orderOf, pinnedModel, providerInfo, rankModels, rememberModels, restingUntil, wake, type ProviderId } from '../ai/providers';
+import { isOn, keyOf, knownModels, listModels, orderOf, pinnedModel, providerInfo, rankModels, rememberModels, restingUntil, sharedSetup, wake, type ProviderId } from '../ai/providers';
 
 const splitNames = (s: string) => s.split(/[,\n]/).map((x) => x.trim().toUpperCase()).filter(Boolean);
 
@@ -77,6 +77,14 @@ function aiRows(s: AppState['settings']): string {
       </div>
     </div>`;
   }).join('')}</div>`;
+}
+
+/** With the shared Setup: who answers, and where the keys are set (once, for every app). */
+function aiShared(s: AppState['settings']): string {
+  const ready = orderOf(s).filter((id) => isOn(s, id) && keyOf(s, id));
+  return `<p class="small">${ready.length ? `Answering: ${ready.map((id) => esc(providerInfo(id).name) + (restingUntil(id) ? ' (resting)' : '')).join(' → ')}` : 'No AI key yet.'}</p>
+    <p class="small muted">The keys and which AI goes first are set once for all your apps, in Money Home → Setup.</p>
+    <a class="btn primary" href="/setup/#ai">AI keys and order — in Setup</a>`;
 }
 
 /** Saves one service's key (Gemini keeps its old field so older backups and devices still read it). */
@@ -198,9 +206,9 @@ export function renderSettings(root: HTMLElement) {
     <div class="card">
       ${foldHead('ai', 'AI assistants', aiMeta(s))}
       ${foldBody('ai')}
-      <p class="small muted" style="margin-top:-4px">Optional, free. Used by <strong>AI check</strong> and the AI statement reader on the Upload screen, and by the Assistant. Add keys for as many services as you like: each request goes to the first one in this order that is switched on and not resting; one that runs out of its free limit rests for 15 minutes (yellow) and the next one answers. You review every suggestion before anything changes.</p>
-      <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers replaced by # and your name by SELF (the statement reader also sends the table's amounts and balances, never your name or account numbers). Free tiers may use what you send to improve their products. Keys are kept on this device (and in your encrypted sync).</p>
-      ${aiRows(s)}
+      <p class="small muted" style="margin-top:-4px">Optional, free. Used by <strong>AI check</strong> and the AI statement reader on the Upload screen, and by the Assistant. ${sharedSetup() ? 'The best service answers first, and one that runs out of its free limit rests for 15 minutes while the next one answers.' : 'Add keys for as many services as you like: each request goes to the first one in this order that is switched on and not resting; one that runs out of its free limit rests for 15 minutes (yellow) and the next one answers.'} You review every suggestion before anything changes.</p>
+      <p class="small muted">What is sent: date, amount, money in/out and the narration, with long numbers replaced by # and your name by SELF (the statement reader also sends the table's amounts and balances, never your name or account numbers). Free tiers may use what you send to improve their products. Keys are kept on this device${sharedSetup() ? '' : ' (and in your encrypted sync)'}.</p>
+      ${sharedSetup() ? aiShared(s) : aiRows(s)}
       </div>
     </div>
 
