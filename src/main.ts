@@ -41,13 +41,14 @@ function mountShell() {
   root.innerHTML = `<div class="shell">
     <nav class="sidebar" aria-label="Main">
       <div class="side-brand">${LOGO}<span class="brand-name">Expense Tracker</span></div>
+      <a class="home-link" href="/" title="Money Home — all your apps"><span aria-hidden="true">⌂</span> Money Home</a>
       <div class="tabbar">${ROUTES.filter((r) => !r.inMenu).map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[r.icon]}</svg><span>${r.label}</span></a>`).join('')}</div>
       <div class="side-ai" data-ai-switch="side"></div>
       <div class="side-user">${profileButton('side')}</div>
     </nav>
     <div class="content">
-      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span><span class="appbar-ai" data-ai-switch="top"></span>${profileButton('top')}</header>
+      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span><span class="appbar-ai" data-ai-switch="top"></span><a class="home-link appbar-home" href="/" title="Money Home — all your apps" aria-label="Money Home"><span aria-hidden="true">⌂</span></a>${profileButton('top')}</header>
       <main class="app" id="view"></main>
     </div>
   </div>`;

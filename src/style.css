@@ -492,3 +492,10 @@ body.dropping::after { content: 'Drop statements to read them'; position: fixed;
 .side-ai { display: none; }
 .side-ai .mai, .side-ai .mai-chip { max-width: 100%; }
 @media (min-width: 900px) { .side-ai { display: block; padding: 8px 8px 0; } }
+
+/* the way back to Money Home (the start page of all the apps) */
+.home-link { display: inline-flex; align-items: center; gap: 6px; margin: 4px 8px 8px; padding: 7px 10px; border-radius: 10px; color: inherit; opacity: .8; text-decoration: none; font-weight: 600; font-size: 13px; }
+.home-link:hover { opacity: 1; background: color-mix(in srgb, currentColor 8%, transparent); }
+.appbar-home { margin: 0 6px 0 0; padding: 6px 10px; font-size: 17px; }
+.sidebar > .home-link { display: none; }
+@media (min-width: 900px) { .sidebar > .home-link { display: inline-flex; } }
