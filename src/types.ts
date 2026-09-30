@@ -100,6 +100,8 @@ export interface LearnedRule {
   excluded?: boolean;
   /** A title you gave this payee. */
   title?: string;
+  /** The merchant's full name when it was learned (the key is cut to 10 letters) — its words teach new merchants. */
+  name?: string;
   createdAt: number;
 }
 

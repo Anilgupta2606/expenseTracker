@@ -1,5 +1,7 @@
 import type { Account, CategorySource, Kind, LearnedRule, ParsedTxn, Settings, Txn } from '../types';
 import { UNCATEGORISED } from './categories';
+import { PACK, PACK_INVEST } from './merchants';
+import { byWords } from './wordlearn';
 import {
   COMPANY_MARKERS, MERCHANT_MARKERS, MERCHANT_RULES, PRIORITY_RULES, TRANSFER_METHOD, type Rule,
 } from './rules';
@@ -129,16 +131,21 @@ export function categorize(t: ParsedTxn, merchant: Merchant, ctx: Context, accou
   const learned = ctx.rules.find((r) => r.key === merchant.key && (!r.direction || r.direction === t.direction));
   if (learned) return { kind: learned.kind, category: learned.category, source: 'learned', excluded: learned.excluded, title: learned.title };
 
-  const pr = matchRule(PRIORITY_RULES, d, t.direction);
+  const pr = matchRule(PRIORITY_RULES, d, t.direction) ?? matchRule(PACK_INVEST, d, t.direction);
   if (pr) return { kind: pr.kind, category: pr.category, source: 'rule' };
 
   if (isOwnTransfer(d, ctx, accountId)) return { kind: 'transfer', category: 'Self Transfer', source: 'self' };
 
-  const mr = matchRule(MERCHANT_RULES, d, 'debit');
+  // the merchant pack (specific names) before the general word rules
+  const mr = matchRule(PACK, d, 'debit') ?? matchRule(MERCHANT_RULES, d, 'debit');
   if (mr) {
     if (t.direction === 'debit') return { kind: mr.kind, category: mr.category, source: 'rule', weak: true };
     return { kind: 'income', category: 'Refund & Cashback', source: 'rule', weak: true };
   }
+
+  // a merchant it has not seen, with a word you taught ("… TIFFIN" -> Food & Dining)
+  const taught = byWords(merchant.name, ctx.rules, t.direction);
+  if (taught && !looksLikePerson(merchant, d)) return { kind: taught.kind, category: taught.category, source: 'learned', weak: true };
 
   if (looksLikePerson(merchant, d)) {
     return t.direction === 'debit'

@@ -101,7 +101,7 @@ export function openEditSheet(t: Txn) {
         const oldRule = s.rules.find(sameRule);
         const ruleTitle = renamed ? newTitle : oldRule?.title;
         const rules = remember
-          ? [...s.rules.filter((r) => !sameRule(r)), { key: t.merchantKey, kind, category, direction, createdAt: Date.now(), ...(ruleTitle ? { title: ruleTitle } : {}) }]
+          ? [...s.rules.filter((r) => !sameRule(r)), { key: t.merchantKey, name: t.merchantName, kind, category, direction, createdAt: Date.now(), ...(ruleTitle ? { title: ruleTitle } : {}) }]
           : s.rules;
         const titled = renamed ? { merchantName: newTitle, titleSet: 'manual' as const } : {};
         const txns = s.txns.map((x) => {
@@ -114,6 +114,11 @@ export function openEditSheet(t: Txn) {
         });
         return { ...s, rules, txns };
       });
+      // the site's Money Brain keeps it too (Setup → What it has learned)
+      try {
+        const mb = (globalThis as unknown as { MoneyBrain?: { learn: (a: string, t: string, k: string, v: string, o?: object) => void } }).MoneyBrain;
+        if (remember && mb) mb.learn('money', 'category', t.merchantName, `${kind}/${category}`, { weight: 3, label: `${t.merchantName} → ${category}`, why: 'You filed it by hand' });
+      } catch { /* the brain is optional */ }
       const n = similarFor(kind).length;
       toast(remember && n ? `Updated ${n + 1} transactions` : 'Saved');
     });

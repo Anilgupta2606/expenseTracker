@@ -105,3 +105,19 @@ describe('pairTransfers', () => {
     expect(txns[3].kind).toBe('spend');
   });
 });
+
+describe('learning that generalises from corrections', () => {
+  const rule = (name: string, category: string) => ({ key: name.slice(0, 10), name, kind: 'spend' as const, category, direction: 'debit' as const, createdAt: 1 });
+  it('a word shared by merchants you filed the same way files a new merchant', () => {
+    const c: Context = { ...ctx, rules: [rule('ANNAPURNA TIFFIN', 'Food & Dining'), rule('SAI TIFFIN CENTRE', 'Food & Dining')] };
+    expect(cat('UPI-LAXMI TIFFIN HOUSE-Q123456789@YBL-YESB0000001-612345678901-LUNCH', 'debit', 'HDFC-1234', c)).toBe('spend/Food & Dining');
+  });
+  it('a word with a mixed record teaches nothing', () => {
+    const c: Context = { ...ctx, rules: [rule('KRISHNA TIFFIN', 'Food & Dining'), rule('GOLDEN TIFFIN BOXES', 'Shopping')] };
+    expect(cat('UPI-LAXMI TIFFIN HOUSE-Q123456789@YBL-YESB0000001-612345678901-LUNCH', 'debit', 'HDFC-1234', c)).not.toBe('spend/Food & Dining');
+  });
+  it('one merchant is not enough, and a person is still a person', () => {
+    const c: Context = { ...ctx, rules: [rule('ANNAPURNA TIFFIN', 'Food & Dining')] };
+    expect(cat('UPI-LAXMI TIFFIN HOUSE-Q123456789@YBL-YESB0000001-612345678901-LUNCH', 'debit', 'HDFC-1234', c)).toBe('spend/Uncategorised');
+  });
+});
