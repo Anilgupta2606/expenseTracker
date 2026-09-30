@@ -43,14 +43,18 @@ function mountShell() {
       <div class="side-brand">${LOGO}<span class="brand-name">Expense Tracker</span></div>
       <div class="tabbar">${ROUTES.filter((r) => !r.inMenu).map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[r.icon]}</svg><span>${r.label}</span></a>`).join('')}</div>
+      <div class="side-ai" data-ai-switch="side"></div>
       <div class="side-user">${profileButton('side')}</div>
     </nav>
     <div class="content">
-      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span>${profileButton('top')}</header>
+      <header class="appbar">${LOGO}<span class="brand-name">Expense Tracker</span><span class="appbar-ai" data-ai-switch="top"></span>${profileButton('top')}</header>
       <main class="app" id="view"></main>
     </div>
   </div>`;
   view = document.getElementById('view')!;
+  // which AI answers, and switching it: the site's central AI (Money Home), when this page has it
+  const mai = (window as unknown as { MoneyAI?: { widget?: (el: Element, o?: object) => void } }).MoneyAI;
+  if (mai?.widget) root.querySelectorAll<HTMLElement>('[data-ai-switch]').forEach((el) => mai.widget!(el, el.dataset.aiSwitch === 'side' ? { up: true, left: true } : {}));
   root.querySelectorAll<HTMLElement>('[data-profile]').forEach((b) => b.addEventListener('click', (e) => {
     e.stopPropagation();
     toggleMenu(b);

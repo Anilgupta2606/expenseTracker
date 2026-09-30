@@ -485,3 +485,10 @@ body.dropping::after { content: 'Drop statements to read them'; position: fixed;
 .ai-review ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
 .ai-review ul.watch li::marker { content: '→ '; }
 .linkish { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; }
+
+/* the AI switch (the site's central AI) */
+.appbar-ai { margin-left: auto; margin-right: 8px; }
+.appbar-ai + .profile-btn { margin-left: 0; }
+.side-ai { display: none; }
+.side-ai .mai, .side-ai .mai-chip { max-width: 100%; }
+@media (min-width: 900px) { .side-ai { display: block; padding: 8px 8px 0; } }
