@@ -1,7 +1,7 @@
 import type { Kind, Txn } from '../types';
 import { CATEGORIES, categoryCounted, KIND_LABEL } from '../categorize/categories';
 import { detectMethod } from '../categorize/engine';
-import { app, toast, update } from './app';
+import { app, askConfirm, toast, update } from './app';
 import { dayLabel, esc, inrFull, accountLabel } from './format';
 import { mountSplitTags, readSplitTags, splitTagsFor } from './splitTags';
 
@@ -44,6 +44,7 @@ export function openEditSheet(t: Txn) {
       <div class="desc-box">${esc(t.description)}</div>
 
       <label class="field"><span>Title</span><input type="text" id="title" value="${esc(title)}" maxlength="40" placeholder="${esc(t.merchantName)}"></label>
+      <label class="field"><span>Date</span><input type="date" id="date" value="${esc(t.date)}" max="2100-12-31"></label>
 
       <label class="field"><span>Type</span></label>
       <div class="seg" style="margin:-6px 0 12px">
@@ -65,6 +66,7 @@ export function openEditSheet(t: Txn) {
         <button class="btn grow" id="cancel">Cancel</button>
         <button class="btn primary grow" id="save">Save</button>
       </div>
+      <div class="row" style="margin-top:10px"><button class="btn danger grow" id="del">Delete this transaction</button></div>
     </div>`;
     backdrop.querySelector<HTMLInputElement>('#title')!.addEventListener('input', (e) => {
       title = (e.target as HTMLInputElement).value;
@@ -83,6 +85,17 @@ export function openEditSheet(t: Txn) {
     });
     mountSplitTags(backdrop.querySelector<HTMLElement>('#st-box')!, st, () => t.amount, () => ({ kind, category }));
     backdrop.querySelector('#cancel')!.addEventListener('click', close);
+    backdrop.querySelector('#del')!.addEventListener('click', async () => {
+      if (!(await askConfirm(`Delete ${t.merchantName} (${inrFull(t.amount)}, ${dayLabel(t.date)})? It leaves every total, and uploading or rescanning the statement won't bring it back.`, 'Delete'))) return;
+      close();
+      await update((s) => ({
+        ...s,
+        // a self transfer it was paired with is no longer paired
+        txns: s.txns.filter((x) => x.id !== t.id).map((x) => (x.pairId === t.id ? { ...x, pairId: undefined } : x)),
+        settings: { ...s.settings, deletedTxns: [...new Set([...(s.settings.deletedTxns ?? []), t.id])] },
+      }));
+      toast('Deleted');
+    });
     backdrop.querySelector('#save')!.addEventListener('click', async () => {
       const extra = readSplitTags(st, t.amount);
       if (extra.error) {
@@ -93,6 +106,11 @@ export function openEditSheet(t: Txn) {
       const note = backdrop.querySelector<HTMLInputElement>('#note')!.value.trim() || undefined;
       const excluded = !backdrop.querySelector<HTMLInputElement>('#counted')!.checked;
       const newTitle = title.trim().slice(0, 40) || t.merchantName;
+      const newDate = backdrop.querySelector<HTMLInputElement>('#date')!.value;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+        const err = backdrop.querySelector<HTMLElement>('#e-err')!;
+        err.textContent = 'Choose a date'; err.hidden = false; return;
+      }
       const renamed = newTitle !== t.merchantName;
       close();
       await update((s) => {
@@ -105,14 +123,14 @@ export function openEditSheet(t: Txn) {
           : s.rules;
         const titled = renamed ? { merchantName: newTitle, titleSet: 'manual' as const } : {};
         const txns = s.txns.map((x) => {
-          if (x.id === t.id) return { ...x, ...titled, kind, category, source: 'manual' as const, note, excluded, tags: extra.tags, splits: extra.splits };
+          if (x.id === t.id) return { ...x, ...titled, kind, category, source: 'manual' as const, note, excluded, tags: extra.tags, splits: extra.splits, date: newDate };
           if (remember && x.merchantKey === t.merchantKey && (!direction || x.direction === direction)) {
             // Types you set by hand on other rows stay; the new title applies to all of them.
             return x.source === 'manual' ? { ...x, ...titled } : { ...x, ...titled, kind, category, source: 'learned' as const };
           }
           return x;
         });
-        return { ...s, rules, txns };
+        return { ...s, rules, txns: newDate !== t.date ? [...txns].sort((a, b) => b.date.localeCompare(a.date)) : txns };
       });
       // the site's Money Brain keeps it too (Setup → What it has learned)
       try {

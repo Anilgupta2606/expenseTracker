@@ -131,6 +131,8 @@ export interface Settings {
   subscriptionMarks?: Record<string, { mark: 'keep' | 'cancel'; at: string }>;
   /** Unusual-spend alerts you dismissed (their ids). */
   dismissedAlerts?: string[];
+  /** Transactions you deleted (their ids), so uploading or rescanning the same statement doesn't bring them back. */
+  deletedTxns?: string[];
 }
 
 /** Your own numbers for a month. Months without one inherit the latest earlier month. */

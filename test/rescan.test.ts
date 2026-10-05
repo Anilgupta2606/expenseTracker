@@ -128,3 +128,23 @@ it('a statement for the same account number joins that account even if an older 
   expect(pv.isNewAccount).toBe(false);
   expect(pv.account.id).toBe(s.accounts[0].id);
 });
+
+describe('a transaction you deleted', () => {
+  // as the edit sheet's Delete does it: off the list, and its id remembered
+  const del = (s: ReturnType<typeof emptyState>, match: string) => {
+    const t = s.txns.find((x) => x.description.includes(match))!;
+    return { ...s, txns: s.txns.filter((x) => x.id !== t.id), settings: { ...s.settings, deletedTxns: [t.id] } };
+  };
+
+  it('is not brought back by uploading the same statement again', () => {
+    const s = del(commitPreview(emptyState(), buildPreview(full, emptyState(), 'jul.pdf')), 'ZOMATO');
+    const again = buildPreview(full, s, 'jul (1).pdf');
+    expect(again.fresh).toHaveLength(0);
+    expect(commitPreview(s, again).txns.map((t) => t.description)).not.toContain('UPI-ZOMATO-ZOMATO@HDFCBANK-X-2');
+  });
+
+  it('is not brought back by a rescan', () => {
+    const s = del(commitPreview(emptyState(), buildPreview(full, emptyState(), 'jul.pdf')), 'ZOMATO');
+    expect(diffRescan(s, s.imports[0].id, full).missing).toHaveLength(0);
+  });
+});

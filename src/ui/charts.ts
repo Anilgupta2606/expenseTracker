@@ -143,18 +143,25 @@ export function trendChart(points: TrendPoint[], selected: string): string {
     const ys = [y(p.spend), y(p.invest)];
     const [ls, li] = Math.abs(ys[0] - ys[1]) < 14 ? (ys[0] <= ys[1] ? [ys[0] - 9, ys[1] + 16] : [ys[0] + 16, ys[1] - 9]) : [ys[0] - 9, ys[1] - 9];
     const anchor = i === 0 && points.length > 1 ? 'start' : i === points.length - 1 && points.length > 1 ? 'end' : 'middle';
+    // hovering (or focusing) a month shows what the selected one shows: crosshair, bigger dots, both values -
+    // and its exact rupees along the top
+    const exact = `${shortMonth(p.month)} · spent ${inr(p.spend)} · invested ${inr(p.invest)}`;
     return `<g class="bar-hit" data-month="${p.month}" role="button" tabindex="0" aria-label="${esc(tip)}">
-      <title>${esc(tip)}</title>
       <rect x="${x(i) - w / 2}" y="${top - 12}" width="${w}" height="${plotH + bottom + 12}" fill="transparent"/>
-      ${sel ? `<line x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${top + plotH}" class="crosshair"/>
+      <g class="hov${sel ? ' on' : ''}">
+        <line x1="${x(i)}" x2="${x(i)}" y1="${top}" y2="${top + plotH}" class="crosshair"/>
+        <circle cx="${x(i)}" cy="${ys[0]}" r="6.5" fill="var(--k-spend)" stroke="var(--surface)" stroke-width="2"/>
+        <circle cx="${x(i)}" cy="${ys[1]}" r="6.5" fill="var(--k-investment)" stroke="var(--surface)" stroke-width="2"/>
         <text x="${x(i)}" y="${ls}" text-anchor="${anchor}" class="val">${compact(p.spend)}</text>
-        <text x="${x(i)}" y="${li}" text-anchor="${anchor}" class="val">${compact(p.invest)}</text>` : ''}
+        <text x="${x(i)}" y="${li}" text-anchor="${anchor}" class="val">${compact(p.invest)}</text>
+      </g>
+      <text x="${W - right}" y="${top - 12}" text-anchor="end" class="val hovtip">${esc(exact)}</text>
       <text x="${x(i)}" y="${H - 6}" text-anchor="middle" class="axis${sel ? ' sel' : ''}">${shortMonth(p.month)}</text>
     </g>`;
   }).join('');
 
   return `<div class="chart">
     <div class="legend small">${series.map((s) => `<span><i class="sw" style="background:${s.color};border-radius:50%"></i>${s.name}</span>`).join('')}</div>
-    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spent and invested by month">${grid}${hits}${lines}</svg>
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Spent and invested by month">${grid}${lines}${hits}</svg>
   </div>`;
 }

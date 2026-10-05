@@ -64,8 +64,8 @@ export function bindFilterBar(root: HTMLElement) {
 
 const signed = (n: number) => `${n < 0 ? '−' : ''}${inr(Math.abs(n))}`;
 
-function section(title: string, body: string, opts: { note?: string; action?: string } = {}): string {
-  return `<section class="panel">
+function section(title: string, body: string, opts: { note?: string; action?: string; wide?: boolean } = {}): string {
+  return `<section class="panel${opts.wide ? ' wide' : ''}">
     <header class="panel-head"><div><h2>${esc(title)}</h2>${opts.note ? `<p class="panel-note">${opts.note}</p>` : ''}</div>${opts.action ?? ''}</header>
     ${body}
   </section>`;
@@ -519,7 +519,7 @@ export function renderDashboard(root: HTMLElement) {
       ${tagsPanel(txns, all)}
       ${section('Spend and investment trend', history.length
         ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month)
-        : '<p class="muted small">No data yet.</p>', { note: `Showing ${history.length} of ${allMonths.length} month${allMonths.length === 1 ? '' : 's'}. Tap a month to open it.`, action: rangeToggle() })}
+        : '<p class="muted small">No data yet.</p>', { note: `Showing ${history.length} of ${allMonths.length} month${allMonths.length === 1 ? '' : 's'}. Hover a month for its numbers; tap to open it.`, action: rangeToggle(), wide: true })}
     </div>
 
     ${anyPlan ? `<div class="grid-2">

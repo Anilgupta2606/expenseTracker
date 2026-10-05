@@ -169,6 +169,10 @@ h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; letter-spacing: -0.005
 .grid-2 { display: grid; gap: 14px; margin-bottom: 14px; }
 .grid-2 > .panel { margin-bottom: 0; }
 @media (min-width: 760px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+/* a card never grows wider than its column (long category names pushed the amounts past the card's edge) */
+.grid-2 > * { min-width: 0; }
+.grid-2 > .panel.wide { grid-column: 1 / -1; }
+.panel { container-type: inline-size; }
 
 /* KPI strip */
 .kpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 14px; }
@@ -256,6 +260,11 @@ label.field > span { display: block; font-size: 13px; color: var(--text-2); marg
 .chart .bar-hit:focus-visible rect { fill: var(--surface-2); }
 .chart polyline, .chart circle { pointer-events: none; }
 .chart .crosshair { stroke: var(--text-3); stroke-width: 1; stroke-dasharray: 3 3; }
+/* the trend chart: a month's values on hover (the selected month keeps them) */
+.chart .hov, .chart .hovtip { opacity: 0; transition: opacity .12s; pointer-events: none; }
+.chart .hov.on, .chart .bar-hit:hover .hov, .chart .bar-hit:focus-visible .hov, .chart .bar-hit:hover .hovtip, .chart .bar-hit:focus-visible .hovtip { opacity: 1; }
+.chart svg:hover .hov.on { opacity: 0; }
+.chart svg:hover .bar-hit:hover .hov.on { opacity: 1; }
 .legend { display: flex; gap: 14px; color: var(--text-2); margin-bottom: 6px; }
 .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
 .legend .sw.line { height: 2px; width: 14px; background: var(--target); vertical-align: 3px; border-radius: 1px; }
@@ -269,6 +278,9 @@ label.field > span { display: block; font-size: 13px; color: var(--text-2); marg
 .pie-row:hover { background: var(--surface-2); }
 .pie-row .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .pie-row .pct { width: 34px; text-align: right; }
+.pie-row .num { white-space: nowrap; flex: none; }
+/* a narrow card: the donut above the list, so the amounts have the whole width */
+@container (max-width: 560px) { .pie-wrap { grid-template-columns: 1fr; } .pie-wrap .donut { max-width: 200px; margin: 0 auto; } }
 
 /* ---------- Tables ---------- */
 .table-scroll { overflow-x: auto; }

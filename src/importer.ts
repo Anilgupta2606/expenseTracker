@@ -108,10 +108,12 @@ export function buildPreview(result: ParseResult, state: AppState, fileName: str
   const importId = `${account.id}-${now}-${hash(fileName)}`;
   // Rows already in the app (e.g. the same statement uploaded again) are skipped.
   const { ids, matches } = matchRows(state, account.id, result.txns);
+  const deleted = new Set(state.settings.deletedTxns ?? []);
   const fresh: Txn[] = [];
   let duplicates = 0;
   result.txns.forEach((p, i) => {
     if (matches[i]) { duplicates++; return; }
+    if (deleted.has(ids[i])) return;                    // you deleted it: not brought back
     const { hint: _h, ...row } = p;
     fresh.push({ ...row, ...classify(p, ctx, account.id), id: ids[i], accountId: account.id, importedAt: now, importId });
   });
@@ -364,6 +366,7 @@ export function diffRescan(state: AppState, importId: string, result: ParseResul
       }
       return;
     }
+    if ((state.settings.deletedTxns ?? []).includes(ids[i])) return;   // you deleted it: a rescan doesn't bring it back
     const { hint: _h, ...row } = p;
     missing.push({ ...row, ...classify(p, ctx, account.id), id: ids[i], accountId: account.id, importId: rec.id, importedAt: Date.now() });
   });
