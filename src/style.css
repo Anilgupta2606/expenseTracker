@@ -172,6 +172,9 @@ h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; letter-spacing: -0.005
 /* a card never grows wider than its column (long category names pushed the amounts past the card's edge) */
 .grid-2 > * { min-width: 0; }
 .grid-2 > .panel.wide { grid-column: 1 / -1; }
+/* the trend chart: the compact drawing in a narrow card, the wide one when the card is wide */
+.trend-wide { display: none; }
+@container (min-width: 720px) { .trend-narrow { display: none; } .trend-wide { display: block; } .trend-wide svg { max-height: 300px; } }
 .panel { container-type: inline-size; }
 
 /* KPI strip */

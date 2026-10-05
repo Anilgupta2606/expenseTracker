@@ -518,7 +518,8 @@ export function renderDashboard(root: HTMLElement) {
       ${categoryPanel(spendCats, investedCats)}
       ${tagsPanel(txns, all)}
       ${section('Spend and investment trend', history.length
-        ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month)
+        ? ((pts) => `<div class="trend-narrow">${trendChart(pts, month)}</div><div class="trend-wide">${trendChart(pts, month, true)}</div>`)(
+            history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })))
         : '<p class="muted small">No data yet.</p>', { note: `Showing ${history.length} of ${allMonths.length} month${allMonths.length === 1 ? '' : 's'}. Hover a month for its numbers; tap to open it.`, action: rangeToggle(), wide: true })}
     </div>
 

@@ -113,8 +113,10 @@ export interface TrendPoint { month: string; spend: number; invest: number }
  * Spend and investment by month as two lines with dots. One rupee axis for
  * both. Tapping a month selects it; the selected month shows its values.
  */
-export function trendChart(points: TrendPoint[], selected: string): string {
-  const W = 340, H = 190, left = 34, right = 14, top = 22, bottom = 24;
+export function trendChart(points: TrendPoint[], selected: string, wide = false): string {
+  // wide: drawn for a full-width card - more room between months, text at its normal size (it used to be the
+  // narrow drawing stretched to the card, which made every label and dot about four times too big)
+  const W = wide ? 1000 : 340, H = wide ? 250 : 190, left = 34, right = 14, top = 22, bottom = 24;
   const plotW = W - left - right, plotH = H - top - bottom;
   const max = niceMax(Math.max(...points.flatMap((p) => [p.spend, p.invest]), 1));
   const y = (v: number) => top + plotH - (Math.max(v, 0) / max) * plotH;
