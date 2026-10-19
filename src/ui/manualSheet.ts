@@ -5,6 +5,7 @@ import { hash } from '../parse/util';
 import { app, askConfirm, toast, update } from './app';
 import { esc } from './format';
 import { mountSplitTags, readSplitTags, splitTagsFor } from './splitTags';
+import { NoMac, macOcr, readReceipt, shrinkPhoto } from '../receipt';
 
 export const MANUAL_ACCOUNT = 'MANUAL';
 export const MANUAL_IMPORT = 'manual';
@@ -26,6 +27,7 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
   const st = splitTagsFor(existing);
   const amountNow = () => parseFloat((backdrop.querySelector<HTMLInputElement>('#m-amount')?.value ?? '').replace(/[^\d.]/g, '')) || 0;
 
+  let scan: { busy?: boolean; msg?: string; bad?: boolean } = {};
   const backdrop = document.createElement('div');
   backdrop.className = 'sheet-backdrop';
   const close = () => backdrop.remove();
@@ -44,6 +46,9 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
     backdrop.innerHTML = `<div class="sheet" role="dialog" aria-label="${existing ? 'Edit' : 'Add'} transaction">
       <div class="grab"></div>
       <h2>${existing ? 'Edit transaction' : 'Add transaction'}</h2>
+      ${existing ? '' : `<div class="scan-row"><label class="btn${scan.busy ? ' busy' : ''}" id="m-scan">📷 ${scan.busy ? 'Reading…' : 'Scan receipt'}
+        <input type="file" id="m-scan-in" accept="image/*" capture="environment" hidden ${scan.busy ? 'disabled' : ''}></label>
+        ${scan.msg ? `<p class="small ${scan.bad ? 'bad' : 'muted'}" id="m-scan-msg">${esc(scan.msg)}</p>` : ''}</div>`}
       <div class="seg" style="margin-bottom:12px">
         ${KINDS.map((k) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${esc(KIND_LABEL[k])}</button>`).join('')}
       </div>
@@ -69,6 +74,29 @@ export function openManualSheet(existing?: Txn, defaultDate?: string) {
       </div>
     </div>`;
     backdrop.querySelectorAll<HTMLElement>('[data-k]').forEach((b) => b.addEventListener('click', () => { kind = b.dataset.k as Kind; draw(); }));
+    backdrop.querySelector<HTMLInputElement>('#m-scan-in')?.addEventListener('change', async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file || scan.busy) return;
+      scan = { busy: true, msg: 'Reading the receipt on your Mac…' }; draw();
+      try {
+        const lines = await macOcr(await shrinkPhoto(file));
+        if (!lines.length) { scan = { msg: 'No text found in that photo — try again closer, with the whole receipt in view.', bad: true }; return; }
+        scan = { busy: true, msg: 'Picking out the amount, shop and date…' }; draw();
+        const { fields: f, byAi } = await readReceipt(lines, app.state.settings);
+        const set = (id: string, v?: string | number) => { const el = backdrop.querySelector<HTMLInputElement>(`#${id}`); if (el && v !== undefined && v !== '') el.value = String(v); };
+        kind = 'spend';
+        if (f.category) category = f.category;
+        set('m-amount', f.amount); set('m-text', f.merchant); set('m-date', f.date);
+        const got = [f.amount ? 'amount' : '', f.merchant ? 'shop' : '', f.date ? 'date' : '', f.category ? 'category' : ''].filter(Boolean);
+        scan = got.length
+          ? { msg: `Filled in ${got.join(', ')}${byAi ? '' : ' (best guess — no AI available)'}. Check them, then tap Add.` }
+          : { msg: 'Could not find the total on that receipt — enter it by hand.', bad: true };
+      } catch (err) {
+        scan = { bad: true, msg: err instanceof NoMac
+          ? 'Scanning needs your Mac’s AI to read the receipt, and it is not reachable now (is the Mac on, with Tailscale on here? or its AI not yet updated). Enter it by hand for now.'
+          : (err as Error).message || 'Could not read the receipt.' };
+      } finally { scan.busy = false; draw(); }
+    });
     const split = mountSplitTags(backdrop.querySelector<HTMLElement>('#st-box')!, st, amountNow, () => ({ kind, category }));
     backdrop.querySelector<HTMLInputElement>('#m-amount')!.addEventListener('input', () => split.refresh());
     backdrop.querySelector<HTMLSelectElement>('#m-cat')!.addEventListener('change', (e) => { category = (e.target as HTMLSelectElement).value; });

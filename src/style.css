@@ -514,3 +514,9 @@ body.dropping::after { content: 'Drop statements to read them'; position: fixed;
 .appbar-home { margin: 0 6px 0 0; padding: 6px 10px; font-size: 17px; }
 .sidebar > .home-link { display: none; }
 @media (min-width: 900px) { .sidebar > .home-link { display: inline-flex; } }
+
+/* Add transaction: Scan receipt (read on your Mac, the fields filled in for you to check) */
+.scan-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 12px; }
+.scan-row .btn { cursor: pointer; }
+.scan-row .btn.busy { opacity: 0.6; pointer-events: none; }
+.scan-row p { margin: 0; flex: 1 1 200px; }
