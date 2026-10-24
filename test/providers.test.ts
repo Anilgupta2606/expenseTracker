@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiSession, hasAi, orderOf, parseJson, toJsonSchema, usable } from '../src/ai/providers';
+import { AiSession, PRIVATE_FIRST, hasAi, orderOf, parseJson, toJsonSchema, usable } from '../src/ai/providers';
 import { emptyState } from '../src/store';
 
 const settings = (over: object) => ({ ...emptyState().settings, ...over });
@@ -9,8 +9,8 @@ const oaiOk = (text: string) => new Response(JSON.stringify({ choices: [{ messag
 
 describe('which services are used', () => {
   it('uses only services that are on and have a key, in your order', () => {
-    const s = settings({ geminiKey: 'g', aiKeys: { groq: 'q', mistral: '' }, aiOrder: ['groq', 'gemini'], aiOff: [] });
-    expect(orderOf(s).slice(0, 2)).toEqual(['groq', 'gemini']);
+    const s = settings({ geminiKey: 'g', aiKeys: { groq: 'q', openrouter: '' }, aiOrder: ['groq', 'gemini'], aiOff: [] });
+    expect(orderOf(s).slice(0, 3)).toEqual(['ollama', 'groq', 'gemini']);           // private first: this computer's model leads
     expect(usable(s)).toEqual(['groq', 'gemini']);
     expect(usable({ ...s, aiOff: ['groq'] })).toEqual(['gemini']);
     expect(hasAi(emptyState().settings)).toBe(false);
@@ -50,9 +50,9 @@ describe('falling back to the next service', () => {
 
   it('skips a service whose key is rejected and still answers', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => (url.includes('googleapis') ? new Response('API key not valid', { status: 400 }) : oaiOk('{"rows":[]}'))));
-    const s = new AiSession(settings({ geminiKey: 'bad', aiKeys: { mistral: 'm' } }), 0);
+    const s = new AiSession(settings({ geminiKey: 'bad', aiKeys: { openrouter: 'o' } }), 0);
     expect(await s.generate('p', SCHEMA)).toEqual({ rows: [] });
-    expect(s.last?.provider).toBe('mistral');
+    expect(s.last?.provider).toBe('openrouter');
   });
 
   it('asks again without the JSON switch when a model refuses it', async () => {
@@ -132,8 +132,26 @@ describe('the shared engine (Money Home /ai/ai.js)', () => {
     const s = new AiSession(emptyState().settings, 0);                         // no key of its own: the hub's AI answers
     expect(hasAi(emptyState().settings)).toBe(true);
     expect(await s.generate('p', SCHEMA)).toEqual({ rows: [7] });
-    expect(generate).toHaveBeenCalledWith('p', SCHEMA);
+    expect(generate).toHaveBeenCalledWith('p', SCHEMA, { only: PRIVATE_FIRST, ordered: true });   // private first, then the cloud
     expect(s.last).toEqual({ provider: 'webllm', model: 'Qwen3-4B', name: 'Private AI (in this browser)' });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('private first; Cerebras, Mistral and Anthropic gone', () => {
+  it('lists only Gemini, Groq, OpenRouter and the local model, the local one first', async () => {
+    const { PROVIDERS, PRIVATE_FIRST } = await import('../src/ai/providers');
+    expect(PROVIDERS.map((p) => p.id).sort()).toEqual(['gemini', 'groq', 'ollama', 'openrouter']);
+    expect(orderOf(settings({ aiOrder: ['gemini', 'groq'] }))[0]).toBe('ollama');
+    expect(PRIVATE_FIRST.slice(0, 2)).toEqual(['mac', 'ollama']);
+  });
+  it('asks the shared engine for your own AI on the Mac first, then the cloud', async () => {
+    const seen: unknown[] = [];
+    vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'money-ai' ? '{}' : null), setItem() {}, removeItem() {} });
+    vi.stubGlobal('MoneyAI', { generate: async (_p: string, _s: object, o: unknown) => { seen.push(o); return { data: { rows: [1] }, id: 'mac', provider: 'Your own AI (on your Mac)', model: 'auto' }; } });
+    const s = new AiSession(settings({}), 0);
+    expect(await s.generate('p', SCHEMA)).toEqual({ rows: [1] });
+    expect(seen[0]).toEqual({ only: ['mac', 'ollama', 'gemini', 'groq', 'nvidia', 'ollamacloud', 'cohere', 'zai', 'openrouter', 'llm7'], ordered: true });
+    expect(s.last?.provider).toBe('mac');
   });
 });

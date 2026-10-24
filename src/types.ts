@@ -111,7 +111,7 @@ export interface Settings {
   familyNames: string[];
   /** Free Google Gemini key for the optional AI check (stored on this device only). */
   geminiKey?: string;
-  /** Keys for the other AI services (Groq, Cerebras, Mistral, OpenRouter, Anthropic; Ollama: its address). */
+  /** Keys for the other AI services (Groq, OpenRouter; Ollama: its address). */
   aiKeys?: Partial<Record<string, string>>;
   /** The order the AI services are tried in. */
   aiOrder?: string[];

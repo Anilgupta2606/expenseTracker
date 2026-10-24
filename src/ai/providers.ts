@@ -4,12 +4,13 @@ import type { Settings } from '../types';
  * Several free AI services behind one call, the way ATS does it: each request goes to the
  * first service in your order that has a key and is not resting; a service that is out of
  * free quota rests for 15 minutes (yellow in Settings) and the next one answers. Every
- * service here accepts calls straight from the browser (checked: Gemini, Groq, Cerebras,
- * Mistral, OpenRouter; Anthropic with its browser header), so nothing needs a server.
+ * service here accepts calls straight from the browser (checked: Gemini, Groq, OpenRouter),
+ * so nothing needs a server. Private first: the model on this computer (Ollama), and on the site your own AI on the
+ * Mac, before any cloud key (Cerebras, Mistral and Anthropic were taken off, 24 Oct 2026).
  * Keys stay on this device (and in the encrypted sync, like the Gemini key always has).
  */
 
-export type ProviderId = 'gemini' | 'groq' | 'cerebras' | 'mistral' | 'openrouter' | 'anthropic' | 'ollama';
+export type ProviderId = 'gemini' | 'groq' | 'openrouter' | 'ollama';
 
 export interface ProviderInfo {
   id: ProviderId;
@@ -30,14 +31,8 @@ export const PROVIDERS: ProviderInfo[] = [
     placeholder: 'AIza…', models: ['gemini-flash-latest', 'gemini-flash-lite-latest'] },
   { id: 'groq', name: 'Groq', free: true, signup: 'console.groq.com/keys - free, no card', signupUrl: 'https://console.groq.com/keys',
     placeholder: 'gsk_…', models: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'openai/gpt-oss-20b'] },
-  { id: 'cerebras', name: 'Cerebras', free: true, signup: 'cloud.cerebras.ai - free tier', signupUrl: 'https://cloud.cerebras.ai',
-    placeholder: 'csk-…', models: ['gpt-oss-120b', 'llama-3.3-70b', 'llama3.1-8b'] },
-  { id: 'mistral', name: 'Mistral', free: true, signup: 'console.mistral.ai - free "Experiment" plan', signupUrl: 'https://console.mistral.ai/api-keys',
-    placeholder: 'key', models: ['mistral-small-latest', 'mistral-medium-latest', 'ministral-8b-latest'] },
   { id: 'openrouter', name: 'OpenRouter', free: true, signup: 'openrouter.ai/keys - free models, small daily limit', signupUrl: 'https://openrouter.ai/keys',
     placeholder: 'sk-or-…', models: ['openrouter/free', 'meta-llama/llama-3.3-70b-instruct:free'] },
-  { id: 'anthropic', name: 'Anthropic Claude', free: false, signup: 'console.anthropic.com - paid, per use', signupUrl: 'https://console.anthropic.com/settings/keys',
-    placeholder: 'sk-ant-…', models: ['claude-haiku-4-5-20251001'], note: 'Paid: every answer costs a little. Off unless you add a key.' },
   { id: 'ollama', name: 'Local (Ollama)', free: true, signup: 'ollama.com - runs on this computer', signupUrl: 'https://ollama.com',
     placeholder: 'http://localhost:11434', models: [], keyless: true,
     note: 'This computer only (not the phone). Start Ollama with OLLAMA_ORIGINS set to this site\'s address so the browser may call it.' },
@@ -78,7 +73,9 @@ export function orderOf(s: Settings): ProviderId[] {
   let saved = (s.aiOrder ?? []).filter((x): x is ProviderId => known.includes(x as ProviderId));
   const first = hubAi().first as ProviderId | undefined;
   if (first && known.includes(first) && (sharedSetup() || !saved.length)) saved = [first, ...saved.filter((x) => x !== first)];
-  return [...saved, ...known.filter((x) => !saved.includes(x))];
+  // PRIVATE FIRST: the model on this computer (Ollama) before any cloud key — your statements stay on the device when it can
+  const all = [...saved, ...known.filter((x) => !saved.includes(x))];
+  return ['ollama' as ProviderId, ...all.filter((x) => x !== 'ollama')];
 }
 export const isOn = (s: Settings, id: ProviderId) => !(s.aiOff ?? []).includes(id);
 /** Services that can answer: switched on and with a key (Ollama: an address). */
@@ -160,7 +157,7 @@ async function callGemini<T>(key: string, model: string, prompt: string, schema:
 }
 
 const OPENAI_BASE: Partial<Record<ProviderId, string>> = {
-  groq: 'https://api.groq.com/openai/v1', cerebras: 'https://api.cerebras.ai/v1', mistral: 'https://api.mistral.ai/v1', openrouter: 'https://openrouter.ai/api/v1',
+  groq: 'https://api.groq.com/openai/v1', openrouter: 'https://openrouter.ai/api/v1',
 };
 
 async function callOpenAiStyle<T>(id: ProviderId, key: string, model: string, prompt: string, schema: object, timeoutMs: number): Promise<T> {
@@ -185,24 +182,12 @@ async function callOpenAiStyle<T>(id: ProviderId, key: string, model: string, pr
   return parseJson<T>(text);
 }
 
-async function callAnthropic<T>(key: string, model: string, prompt: string, schema: object, timeoutMs: number): Promise<T> {
-  const res = await post('https://api.anthropic.com/v1/messages',
-    { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-    { model, max_tokens: 8192, temperature: 0, system: SYSTEM(schema), messages: [{ role: 'user', content: prompt }] }, timeoutMs);
-  if (!res.ok) await failure('Anthropic Claude', res);
-  const data = await res.json();
-  const text: string = (data?.content ?? []).map((c: { text?: string }) => c.text ?? '').join('');
-  if (data?.stop_reason === 'max_tokens') throw new AiUnavailable('Claude: the answer was too long and was cut off.', 502);
-  return parseJson<T>(text);
-}
-
 /** The models a key can use - also a check that the key works. */
 export async function listModels(id: ProviderId, key: string): Promise<string[]> {
   const name = providerInfo(id).name;
   let res: Response;
   try {
     if (id === 'gemini') res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(key)}`);
-    else if (id === 'anthropic') res = await fetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' } });
     else if (id === 'ollama') res = await fetch(`${key.replace(/\/+$/, '')}/api/tags`);
     else res = await fetch(`${OPENAI_BASE[id]}/models`, { headers: { Authorization: `Bearer ${key}` } });
   } catch {
@@ -227,8 +212,7 @@ export async function listModels(id: ProviderId, key: string): Promise<string[]>
 /** Not chat models, or not useful for reading statements: never picked. */
 const NOT_CHAT = /embed|tts|whisper|audio|speech|transcribe|image|imagen|veo|lyria|dall|vision-only|guard|moderation|ocr|rerank|live|realtime|robotics|computer-use|omni|customtools|aqa|learnlm|search|compound|playai|safeguard/i;
 /** Strong, fast general models first (checked Sep 2026); anything not listed is ranked by its size. */
-const PREFER = ['gpt-oss-120b', 'kimi-k2', 'qwen3-235b', 'qwen-3-235b', 'llama-4-maverick', 'deepseek-v3', 'llama-3.3-70b', 'mistral-large',
-  'mistral-medium', 'qwen3-32b', 'qwen-3-32b', 'llama-4-scout', 'mistral-small', 'gpt-oss-20b', 'gemma-3-27b', 'deepseek-r1', 'ministral-8b', 'llama-3.1-8b', 'llama3.1-8b', 'ministral-3b'];
+const PREFER = ['gpt-oss-120b', 'kimi-k2', 'qwen3-235b', 'qwen-3-235b', 'llama-4-maverick', 'deepseek-v3', 'llama-3.3-70b', 'qwen3-32b', 'qwen-3-32b', 'llama-4-scout', 'gpt-oss-20b', 'gemma-3-27b', 'deepseek-r1', 'llama-3.1-8b', 'llama3.1-8b',];
 const sizeB = (m: string) => Number(m.match(/(\d+(?:\.\d+)?)b\b/i)?.[1] ?? 0);
 const verOf = (m: string) => Number(m.match(/(\d+(?:\.\d+)?)/)?.[1] ?? 0);
 const prefIdx = (m: string) => { const i = PREFER.findIndex((p) => m.toLowerCase().includes(p)); return i < 0 ? PREFER.length : i; };
@@ -236,7 +220,7 @@ const prefIdx = (m: string) => { const i = PREFER.findIndex((p) => m.toLowerCase
 /**
  * The models a key can use, best first, for this app's job (reading statement rows into JSON):
  * Gemini - the newest stable Flash (Pro has tiny free limits, Lite is weaker, previews come and
- * go); Groq, Cerebras, Mistral, OpenRouter - the strongest general models first, then by size
+ * go); Groq, OpenRouter - the strongest general models first, then by size
  * (OpenRouter: only the free ones); Claude - Haiku first (cheapest); Ollama - the smallest first,
  * because an 8 GB laptop stalls on big ones.
  */
@@ -251,10 +235,6 @@ export function rankModels(id: ProviderId, names: string[]): string[] {
     const newest = (k: number) => Math.max(0, ...g.filter((m) => !alias(m) && !preview(m) && kind(m) === k).map(verOf));
     const score = (m: string) => [preview(m), -kind(m), -(alias(m) ? newest(kind(m)) : verOf(m)), alias(m) ? 1 : 0];
     return g.sort((a, b) => { const x = score(a), y = score(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return a.localeCompare(b); });
-  }
-  if (id === 'anthropic') {
-    const tier = (m: string) => (/haiku/.test(m) ? 0 : /sonnet/.test(m) ? 1 : 2);
-    return uniq.filter((m) => /^claude/.test(m) && !/opus/.test(m)).sort((a, b) => tier(a) - tier(b) || verOf(b.replace(/^claude-\D*/, '')) - verOf(a.replace(/^claude-\D*/, '')));
   }
   if (id === 'ollama') {
     return uniq.sort((a, b) => (sizeB(a) || 99) - (sizeB(b) || 99));
@@ -303,6 +283,8 @@ interface CentralAi {
   aiAvailable?: () => boolean;
   aiNames?: () => string[];
 }
+/** The order the shared engine is asked in: private first, then the cloud. */
+export const PRIVATE_FIRST = ['mac', 'ollama', 'gemini', 'groq', 'nvidia', 'ollamacloud', 'cohere', 'zai', 'openrouter', 'llm7'];
 export function centralAi(): CentralAi | null {
   try {
     const m = (globalThis as unknown as { MoneyAI?: CentralAi }).MoneyAI;
@@ -330,7 +312,6 @@ export class AiSession {
 
   private async ask<T>(id: ProviderId, key: string, model: string, prompt: string, schema: object): Promise<T> {
     if (id === 'gemini') return callGemini<T>(key, model, prompt, schema, this.timeoutMs);
-    if (id === 'anthropic') return callAnthropic<T>(key, model, prompt, schema, this.timeoutMs);
     return callOpenAiStyle<T>(id, key, model, prompt, schema, this.timeoutMs);
   }
 
@@ -338,7 +319,9 @@ export class AiSession {
     // the shared engine answers when it is here: the same AI, order and limits as the other apps
     const hub = centralAi();
     if (hub) {
-      const r = await hub.generate(prompt, schema);
+      // PRIVATE FIRST: your own AI on the Mac (it keeps a statement private: Apple's Private Cloud or the Mac's own model),
+      // then this computer's model, then the cloud keys only if neither answers
+      const r = await hub.generate(prompt, schema, { only: PRIVATE_FIRST, ordered: true });
       this.last = { provider: r.id, model: r.model, name: r.provider };
       return r.data as T;
     }

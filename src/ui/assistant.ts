@@ -113,7 +113,7 @@ export function renderAssistant(root: HTMLElement) {
   root.innerHTML = `
     <h1>Assistant</h1>
     <p class="small muted" style="margin:-6px 0 14px">Ask a question or tell it what to change. Every change is shown first and happens only when you tap Confirm.</p>
-    ${hasKey ? '' : '<div class="card small">The assistant needs a free AI key (Gemini, Groq, Cerebras, Mistral or OpenRouter). <button class="link-btn" data-go-settings>Add one in Settings</button></div>'}
+    ${hasKey ? '' : '<div class="card small">The assistant needs a free AI key (Gemini, Groq or OpenRouter). <button class="link-btn" data-go-settings>Add one in Settings</button></div>'}
     <div class="as-log">${history.map(entryHtml).join('')}</div>
     ${history.length ? '' : `<div class="chips as-examples">${EXAMPLES.map((x) => `<button class="chip" data-example="${esc(x)}">${esc(x)}</button>`).join('')}</div>`}
     <form class="as-input" autocomplete="off">
