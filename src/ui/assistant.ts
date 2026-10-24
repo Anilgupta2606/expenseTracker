@@ -1,6 +1,7 @@
 import type { AppState, Txn } from '../types';
 import { aiNames, hasAi } from '../ai/providers';
 import { KIND_LABEL } from '../categorize/categories';
+import { ABOUT_APP, appGuide } from '../appGuide';
 import { answer, applyPlan, describeAction, planRequest, targets, wouldChange, type AssistantPlan } from '../assistant';
 import { expandSplits } from '../splits';
 import { app, navigate, render, toast, update } from './app';
@@ -32,7 +33,8 @@ async function ask(request: string) {
   history.push(entry);
   render();
   try {
-    entry.plan = await planRequest(request, app.state);
+    // a question about the app itself also gets the app guide (the pages, this page's buttons, the README)
+    entry.plan = await planRequest(request, app.state, undefined, undefined, ABOUT_APP.test(request) ? appGuide() : '');
     const plan = entry.plan;
     // Only rows the change would actually alter; the rest are already that way.
     entry.ids = targets(app.state, plan)

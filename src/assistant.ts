@@ -33,7 +33,7 @@ export type AssistantAction =
 export type Measure = 'total' | 'count' | 'list' | 'by_category' | 'by_payee' | 'by_month';
 
 export interface AssistantPlan {
-  intent: 'change' | 'question' | 'unclear';
+  intent: 'change' | 'question' | 'unclear' | 'help';
   reply: string;
   filter: TxnFilter;
   action?: AssistantAction;
@@ -71,6 +71,7 @@ export function matchFilter(t: Txn, f: TxnFilter, state: Pick<AppState, 'account
 /** Which rows an action touches: the filtered ones, or the whole category for a "What counts" switch. */
 export function targets(state: AppState, plan: AssistantPlan): Txn[] {
   const a = plan.action;
+  if (plan.intent === 'help' || plan.intent === 'unclear') return [];     // about the app, or not understood: no rows
   if (a?.type === 'category_counted') return state.txns.filter((t) => t.kind === a.kind && t.category === a.category);
   // A question is answered from what the totals see - a split payment as its parts. A change
   // applies to whole transactions; a new type is not given to a split one (its parts have theirs).
@@ -147,7 +148,7 @@ export function answer(rows: Txn[], measure: Measure = 'total'): Answer {
 const SCHEMA = {
   type: 'OBJECT',
   properties: {
-    intent: { type: 'STRING', enum: ['change', 'question', 'unclear'] },
+    intent: { type: 'STRING', enum: ['change', 'question', 'unclear', 'help'] },
     reply: { type: 'STRING' },
     filter: {
       type: 'OBJECT',
@@ -194,7 +195,7 @@ export function assistantContext(state: AppState) {
   return { payees, banks, months, tags };
 }
 
-function prompt(request: string, state: AppState, today: string): string {
+function prompt(request: string, state: AppState, today: string, guide = ''): string {
   const { payees, banks, months, tags } = assistantContext(state);
   return `You turn a request typed into a personal expense tracker (Indian rupees) into a filter plus either a change or a question. The app then finds the matching transactions itself and shows them to the user before changing anything.
 
@@ -206,7 +207,7 @@ Payee titles in the app: ${JSON.stringify(payees)}
 Tags in the app: ${JSON.stringify(tags)}
 
 Return:
-- intent: "change" to modify transactions, "question" to answer from the data, "unclear" if you can't tell (then ask in reply).
+- intent: "change" to modify transactions, "question" to answer from the data, "unclear" if you can't tell (then ask in reply)${guide ? ', "help" when the request is about using the app itself (where a page or button is, how to do something) - then reply is the answer from the APP GUIDE below in 2-5 sentences naming the exact place (page → button), filter {}, action none, measure none; if the guide does not cover it, say so' : ''}.
 - reply: one short friendly sentence saying what you understood (e.g. "Marking all self transfers as not counted."). Never invent numbers; the app computes them.
 - filter: only the fields the request implies. payees must be copied exactly from the payee list (pick every title that fits, e.g. all spellings of a person). Use text for words to find in narrations when no payee fits. Dates as YYYY-MM-DD ("August" means the most recent August with data). direction "debit" = money out, "credit" = money in. counted: true/false only if the request mentions counted / not counted rows. tags: copied exactly from the tag list when the request names one ("the goa trip", "#office").
 - action (for changes):
@@ -227,15 +228,15 @@ Examples (payees and dates are illustrative):
 - "top payees I paid in July" → intent question, filter {from:"2026-07-01", to:"2026-07-31", direction:"debit"}, measure by_payee
 - "which transactions are not counted?" → intent question, filter {counted:false}, measure list
 
-Request: ${JSON.stringify(request)}`;
+${guide ? `APP GUIDE (for a "help" request only):\n${guide}\n\n` : ''}Request: ${JSON.stringify(request)}`;
 }
 
-export async function planRequest(request: string, state: AppState, retryDelay = 2000, today = new Date().toISOString().slice(0, 10)): Promise<AssistantPlan> {
+export async function planRequest(request: string, state: AppState, retryDelay = 2000, today = new Date().toISOString().slice(0, 10), guide = ''): Promise<AssistantPlan> {
   if (!hasAi(state.settings)) throw new Error('Add a free AI key in Settings → AI assistants first.');
   const raw = await aiSession(state.settings, retryDelay).generate<{
     intent: AssistantPlan['intent']; reply: string; filter?: TxnFilter; remember?: boolean; measure?: Measure | null;
     action?: { type: AssistantAction['type'] | 'none'; counted?: boolean; kind?: Kind; category?: string; title?: string } | null;
-  }>(prompt(request, state, today), SCHEMA);
+  }>(prompt(request, state, today, guide), SCHEMA);
   return sanitize(raw, request);
 }
 
@@ -279,6 +280,7 @@ export function sanitize(raw: {
   if (a?.type === 'category_counted' && kind && categoryFor(kind)) action = { type: 'category_counted', kind, category: categoryFor(kind)!, counted };
   let intent = raw.intent;
   if (intent === 'change' && !action) intent = 'unclear';
+  if (intent === 'help') return { intent, reply: (raw.reply ?? '').trim(), filter: {}, measure: 'total', remember: false };
   const measure = !raw.measure || raw.measure === 'none' ? 'total' : raw.measure;
   return { intent, reply: (raw.reply ?? '').trim(), filter, action, measure, remember: Boolean(raw.remember) };
 }
