@@ -9,8 +9,14 @@ function fullYear(y: number): number {
   return y < 100 ? 2000 + y : y;
 }
 
+function daysInMonth(y: number, m: number): number {
+  if (m === 2) return (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)) ? 29 : 28;
+  return [31, 0, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+}
+
 function valid(y: number, m: number, d: number): string | null {
-  if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1990 || y > 2100) return null;
+  if (m < 1 || m > 12 || d < 1 || y < 1990 || y > 2100) return null;
+  if (d > daysInMonth(y, m)) return null;
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 

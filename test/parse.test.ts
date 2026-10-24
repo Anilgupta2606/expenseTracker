@@ -60,6 +60,11 @@ describe('parseDate', () => {
     expect(parseDate('5 Aug 2026')).toBe('2026-08-05');
     expect(parseDate('2026-07-31')).toBe('2026-07-31');
     expect(parseDate('32/07/26')).toBeNull();
+    expect(parseDate('31/02/26')).toBeNull();
+    expect(parseDate('29/02/24')).toBe('2024-02-29');
+    expect(parseDate('29/02/25')).toBeNull();
+    expect(parseDate('31/04/26')).toBeNull();
+    expect(parseDate('2026-02-31')).toBeNull();
   });
 });
 
