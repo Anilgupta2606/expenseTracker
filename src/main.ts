@@ -1,4 +1,5 @@
 import './style.css';
+import './style-new.css';
 import { registerSW } from 'virtual:pwa-register';
 import { loadFile, loadState } from './store';
 import { app, onRender, toast, update } from './ui/app';
@@ -13,8 +14,11 @@ import { esc } from './ui/format';
 import { applyTheme, getTheme, setTheme, type Theme } from './theme';
 import { planLink, planOpener } from './links';
 import { runSync, startSync } from './ui/syncUi';
+import { applyLook, getLook, setLook, type Look } from './look';
+import { syncDock } from './ui/chatDock';
 
 applyTheme();
+applyLook();
 const initialsOf = (name: string) => (name.trim().slice(0, 2) || '?').toUpperCase();
 
 const ICONS = {
@@ -42,6 +46,7 @@ function mountShell() {
     <nav class="sidebar" aria-label="Main">
       <div class="side-brand">${LOGO}<span class="brand-name">Expense Tracker</span></div>
       <a class="home-link" href="/" title="Money Home — all your apps"><span aria-hidden="true">⌂</span> Money Home</a>
+      <button class="look-link" data-look-switch title="Switch between the new design and the classic one"></button>
       <div class="tabbar">${ROUTES.filter((r) => !r.inMenu).map((r) => `<a href="${r.hash}" data-hash="${r.hash}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[r.icon]}</svg><span>${r.label}</span></a>`).join('')}</div>
       <div class="side-ai" data-ai-switch="side"></div>
@@ -53,6 +58,7 @@ function mountShell() {
     </div>
   </div>`;
   view = document.getElementById('view')!;
+  root.querySelector('[data-look-switch]')!.addEventListener('click', () => pickLook(getLook() === 'new' ? 'classic' : 'new'));
   // which AI answers, and switching it: the site's central AI (Money Home), when this page has it
   const mai = (window as unknown as { MoneyAI?: { widget?: (el: Element, o?: object) => void } }).MoneyAI;
   if (mai?.widget) root.querySelectorAll<HTMLElement>('[data-ai-switch]').forEach((el) => mai.widget!(el, el.dataset.aiSwitch === 'side' ? { up: true, left: true } : {}));
@@ -67,6 +73,14 @@ function profileButton(where: 'top' | 'side'): string {
   return `<button class="profile-btn ${where}" data-profile aria-haspopup="menu" aria-expanded="false" aria-label="Profile, settings and theme">
     <span class="avatar-round" data-initials></span>${where === 'side' ? '<span class="grow"><span class="who" data-who></span><span class="tiny">Settings &amp; theme</span></span>' : ''}
   </button>`;
+}
+
+const LOOKS: { value: Look; label: string }[] = [{ value: 'new', label: 'New' }, { value: 'classic', label: 'Classic' }];
+
+/** The new design or the classic one: the screens redraw in place, nothing else changes. */
+function pickLook(look: Look) {
+  setLook(look);
+  render();
 }
 
 const THEMES: { value: Theme; label: string }[] = [
@@ -101,6 +115,8 @@ function toggleMenu(anchor: HTMLElement) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>Investment plan<span class="pm-ext" aria-label="opens in a new tab">↗</span></a>` : ''}
       <a href="ats://open" target="_blank" rel="noopener" class="pm-item" role="menuitem" data-pm-ats title="Opens the trading dashboard on this Mac - starts it first if it is not running">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/></svg>Open ATS<span class="pm-ext" aria-label="the trading dashboard on this Mac">↗</span></a>
+      <div class="pm-label">Design</div>
+      <div class="seg-toggle pm-theme" role="group" aria-label="Design">${LOOKS.map((l) => `<button data-look-pick="${l.value}" class="${getLook() === l.value ? 'on' : ''}" aria-pressed="${getLook() === l.value}">${l.label}</button>`).join('')}</div>
       <div class="pm-label">Theme</div>
       <div class="seg-toggle pm-theme" role="group" aria-label="Theme">${THEMES.map((t) => `<button data-theme-pick="${t.value}" class="${theme === t.value ? 'on' : ''}" aria-pressed="${theme === t.value}">${t.label}</button>`).join('')}</div>
       <button class="pm-item danger" role="menuitem" data-pm-signout>
@@ -110,6 +126,10 @@ function toggleMenu(anchor: HTMLElement) {
     menu.querySelector('[data-pm-home]')?.addEventListener('click', closeMenu);
     menu.querySelector('[data-pm-ats]')?.addEventListener('click', closeMenu);
     menu.querySelector('[data-pm-signout]')!.addEventListener('click', () => { closeMenu(); setSignedIn(false); render(); });
+    menu.querySelectorAll<HTMLElement>('[data-look-pick]').forEach((b) => b.addEventListener('click', () => {
+      pickLook(b.dataset.lookPick as Look);
+      drawMenu();
+    }));
     menu.querySelectorAll<HTMLElement>('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => {
       setTheme(b.dataset.themePick as Theme);
       drawMenu();
@@ -142,6 +162,7 @@ let lastHash = '';
 function render() {
   if (!isSignedIn()) {
     view = null;
+    syncDock(false, false);
     document.body.classList.add('signed-out');
     renderLogin(root, () => { document.body.classList.remove('signed-out'); render(); void takeSharedFiles(); void runSync(true); });
     return;
@@ -157,6 +178,9 @@ function render() {
   document.querySelectorAll<HTMLElement>('[data-profile]').forEach((b) => b.classList.toggle('active', hash === '#settings'));
   const scroll = window.scrollY;
   route.view(view!);
+  const look = getLook();
+  root.querySelectorAll('[data-look-switch]').forEach((b) => { b.textContent = look === 'new' ? '◐ Classic view' : '✦ New design'; });
+  syncDock(look === 'new', hash !== '#assistant');
   // Keep the scroll position when re-rendering the same screen.
   window.scrollTo(0, hash === lastHash ? scroll : 0);
   lastHash = hash;

@@ -11,6 +11,9 @@ import { donutChart, monthlyChart, shortMonth, toSlices, trendChart, type MonthP
 import { applyFilters, dayLabel, esc, inr, inrFull, kindVar, monthLabel, monthShort, accountLabel } from './format';
 import { MANUAL_ACCOUNT, openManualSheet } from './manualSheet';
 import { openPlanSheet } from './planSheet';
+import { getLook } from '../look';
+import { getTheme, setTheme } from '../theme';
+import { openDock } from './chatDock';
 
 function byCategory(txns: Txn[]): { category: string; total: number; count: number }[] {
   const m = new Map<string, { total: number; count: number }>();
@@ -207,14 +210,18 @@ function reviewPanel(month: string, txns: Txn[]): string {
 const ordinal = (d: number) => `${d}${d % 10 === 1 && d !== 11 ? 'st' : d % 10 === 2 && d !== 12 ? 'nd' : d % 10 === 3 && d !== 13 ? 'rd' : 'th'}`;
 
 /** Bills and SIPs that go out every month, and whether this month's has left yet. */
-function recurringPanel(txns: Txn[]): string {
+function recurringPanel(txns: Txn[], timeline = false): string {
   const list = recurringPayments(txns);
   if (!list.length) return '';
   const missing = list.filter((r) => r.status === 'missing').length;
   const total = list.reduce((a, r) => a + r.amount, 0);
   const badge = { paid: '<span class="badge ok-badge">Paid</span>', due: '<span class="badge">Due</span>', missing: '<span class="badge warn">Not seen</span>' };
   const asOf = txns.reduce((a, t) => (t.date > a ? t.date : a), '');
-  return section('Recurring payments', `<ul class="movements">${list.slice(0, 12).map((r) => `<li><a href="#txns" data-recurring="${esc(r.key)}">
+  const today = Number(asOf.slice(8, 10)) || 1;
+  // the month as a line, each payment a dot on its day
+  const line = timeline ? `<div class="nx-days" aria-hidden="true"><span class="ln"></span>${list.slice(0, 12).map((r) => `<span class="dot" style="left:${((r.day - 1) / 30) * 100}%;background:${kindVar(r.kind)}" title="${esc(r.name)} · ${ordinal(r.day)}"></span>`).join('')}
+    ${[1, 10, 20, 31].map((d) => `<span class="tick" style="left:${((d - 1) / 30) * 100}%">${d}</span>`).join('')}<span class="today" style="left:${((Math.min(today, 31) - 1) / 30) * 100}%"></span></div>` : '';
+  return section('Recurring payments', `${line}<ul class="movements">${list.slice(0, 12).map((r) => `<li><a href="#txns" data-recurring="${esc(r.key)}">
       <span class="dot" style="background:${kindVar(r.kind)}"></span>
       <span class="grow"><span class="mv-label">${esc(r.name)}</span><span class="tiny">${esc(r.category)} · around the ${ordinal(r.day)} · ${r.months} months</span></span>
       <span class="rec-side"><span class="num">${inr(r.amount)}</span>${badge[r.status]}</span></a></li>`).join('')}</ul>`,
@@ -412,6 +419,129 @@ function historyTable(rows: MonthSummary[]): string {
 
 let monthDefaulted = false;
 
+/* ---------- the new design ---------- */
+
+type TrendMode = 'spent' | 'invested' | 'both';
+let trendMode: TrendMode = (() => {
+  try { const v = localStorage.getItem('et-trend'); return v === 'invested' || v === 'both' ? v : 'spent'; } catch { return 'spent'; }
+})();
+
+const css = (name: string, fallback: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+
+/** A small ring for the hero: how much of the budget or target is used. */
+function ring(actual: number, expected: number, color: string): string {
+  const r = 22, c = 2 * Math.PI * r, p = expected > 0 ? actual / expected : 0;
+  return `<svg viewBox="0 0 54 54" aria-hidden="true"><circle cx="27" cy="27" r="${r}" fill="none" stroke="rgb(255 255 255 / .1)" stroke-width="6"/>
+    <circle class="nx-arc" cx="27" cy="27" r="${r}" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="0 ${c.toFixed(1)}"
+      data-full="${(c * Math.min(1, p)).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 27 27)" style="filter:drop-shadow(0 0 4px ${color})"/>
+    <text x="27" y="31" text-anchor="middle">${expected > 0 ? Math.round(p * 100) + '%' : '—'}</text></svg>`;
+}
+
+interface HeroData { s: MonthSummary; month: string; all: boolean; months: string[]; older?: string; newer?: string; count: number; asOf: string }
+
+function heroHtml({ s, month, all, months, older, newer, count, asOf }: HeroData): string {
+  const name = all ? 'all time' : monthLabel(month).split(' ')[0];
+  const planned = s.planSet;
+  const vsPlan = s.saved - s.plannedSaving;
+  const big = planned ? Math.abs(s.saved) : s.actual.spend;
+  const kick = planned ? (s.saved < 0 ? `Overspent ${all ? '' : 'in '}${name}` : `Saved ${all ? '' : 'in '}${name}`) : `Spent ${all ? '' : 'in '}${name}`;
+  const lead = planned
+    ? `<b>${s.plan.income > 0 ? Math.round((s.saved / s.plan.income) * 100) : 0}%</b> of your income ${s.saved < 0 ? 'over' : 'kept'} — <b class="${vsPlan >= 0 ? 'nx-good' : 'nx-bad'}">${vsPlan >= 0 ? '+' : '−'}${inr(Math.abs(vsPlan))}</b> ${vsPlan >= 0 ? 'more' : 'less'} than the plan. `
+    : 'Set your income and targets to see what you saved. ';
+  const gauge = (label: string, actual: number, expected: number, color: string, over: number, good: boolean) => `<div class="nx-mg">${ring(actual, expected, color)}<div>
+      <div class="t">${label}</div><div class="v num"><span data-count="${Math.round(actual)}">${inr(0)}</span>${expected > 0 ? ` <span class="of">/ ${inr(expected)}</span>` : ''}</div>
+      ${expected > 0 ? `<span class="pill ${good ? 'ok' : 'bad'}">${good ? '✓' : '▲'} ${inr(Math.abs(over))} ${label.startsWith('Spending') ? (good ? 'under' : 'over') : (good ? 'ahead' : 'short')}</span>` : '<span class="tiny">no target</span>'}</div></div>`;
+  return `<header class="nx-hero"><div class="nx-hin">
+    <div class="nx-top"><h1>Overview</h1>
+      <div class="month-switch" role="group" aria-label="Month">
+        <button class="icon-btn" data-goto="${older ?? ''}" ${older ? '' : 'disabled'} aria-label="Previous month">‹</button>
+        <select data-filter="month" aria-label="Month">
+          <option value="all" ${all ? 'selected' : ''}>All time</option>
+          ${months.map((m) => `<option value="${m}" ${month === m ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}
+        </select>
+        <button class="icon-btn" data-goto="${newer ?? ''}" ${newer ? '' : 'disabled'} aria-label="Next month">›</button>
+      </div>
+      ${accountSelect()}
+      <button class="nx-ib" data-nx-theme title="Light or dark" aria-label="Switch between light and dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg></button>
+      <button class="nx-add" data-add>＋ Add</button></div>
+    <div class="nx-hgrid">
+      <div>
+        <div class="nx-kick">${esc(kick)}</div>
+        <div class="nx-big"><span data-count="${Math.round(big)}">${inr(0)}</span>${planned ? `<small>of ${inr(s.plan.income)} income</small>` : ''}</div>
+        <p class="nx-lead">${lead}${count} transaction${count === 1 ? '' : 's'}${asOf ? `, statements up to ${esc(dayLabel(asOf))}` : ''}.</p>
+        ${planned ? `<div class="nx-minig">
+          ${gauge('Spending budget', s.actual.spend, s.plan.expectedSpend, css('--k-spend', '#f0a35c'), s.spendOver, s.spendOver <= 0)}
+          ${gauge('Investing target', s.actual.invested, s.plan.expectedInvestment, css('--k-investment', '#6fb3ee'), s.investOver, s.investOver >= 0)}
+        </div><button class="nx-link" data-plan>Edit plan</button>` : `<button class="nx-add" data-plan style="margin-top:16px">Set income &amp; targets</button>`}
+        <button class="nx-askbar" data-nx-ask><span class="sp">✦</span><span class="grow">Ask about ${esc(all ? 'your money' : name)} — “where did my money go?”</span><kbd>Ask</kbd></button>
+      </div>
+      <div class="nx-flow" id="nx-flow"><canvas></canvas>
+        <div class="nx-src">${planned ? `Income<b>${inr(s.plan.income)}</b>` : `Out<b>${inr(s.actual.spend + s.actual.invested)}</b>`}</div>
+        ${jarsOf(s).map((j, i) => `<div class="nx-jarl" data-jar="${i}" style="--c:${j.color}"><span>${esc(j.label)}</span><b class="num">${j.value < 0 ? '−' : ''}${inr(Math.abs(j.value))}</b>
+          <small>${planned && s.plan.income > 0 ? `${Math.round((j.value / s.plan.income) * 100)}% of income` : ''}</small></div>`).join('')}
+      </div>
+    </div></div></header>`;
+}
+
+function jarsOf(s: MonthSummary) {
+  const jars = [
+    { label: 'Spent', value: Math.max(0, s.actual.spend), color: css('--k-spend', '#f0a35c') },
+    { label: 'Invested', value: s.actual.invested, color: css('--k-investment', '#6fb3ee') },
+  ];
+  if (s.planSet) jars.push({ label: s.saved < 0 ? 'Overspent' : 'Saved', value: s.saved, color: s.saved < 0 ? css('--bad', '#ef7a66') : css('--nx-saved', '#4cc38a') });
+  return jars;
+}
+
+function trendPanel(history: MonthSummary[], month: string, allCount: number): string {
+  const points = (pick: (r: MonthSummary) => [number, number]): MonthPoint[] =>
+    history.map((r) => { const [actual, expected] = pick(r); return { month: r.month, actual, expected, planSet: r.planSet }; });
+  const chart = !history.length ? '<p class="muted small">No data yet.</p>'
+    : trendMode === 'both' ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month, true)
+    : trendMode === 'invested' ? monthlyChart(points((r) => [r.actual.invested, r.plan.expectedInvestment]), month, kindVar('investment'), 'Invested')
+    : monthlyChart(points((r) => [Math.max(r.actual.spend, 0), r.plan.expectedSpend]), month, kindVar('spend'), 'Spent');
+  const tabs = `<span class="seg-toggle" role="group" aria-label="Chart">${([['spent', 'Spent'], ['invested', 'Invested'], ['both', 'Both']] as [TrendMode, string][])
+    .map(([v, l]) => `<button data-trend="${v}" class="${trendMode === v ? 'on' : ''}" aria-pressed="${trendMode === v}">${l}</button>`).join('')}</span>`;
+  const note = trendMode === 'both' ? 'Spent and invested each month. Hover a month for its numbers; tap to open it.'
+    : `${trendMode === 'spent' ? 'Spending against your budget' : 'Investing against your target'} each month. Tap a month to open it.`;
+  return section(`${history.length} month${history.length === 1 ? '' : 's'}`, chart, { note: `${note} Showing ${history.length} of ${allCount}.`, action: `<span class="nx-acts">${tabs}${rangeToggle()}</span>` });
+}
+
+/** Numbers count up, rings sweep, cards rise in as they come into view and lean a little towards the pointer. */
+let seenMonth = '';
+function animateNew(root: HTMLElement, key: string) {
+  const first = key !== seenMonth;
+  seenMonth = key;
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  root.querySelectorAll<HTMLElement>('[data-count]').forEach((el) => {
+    const to = Number(el.dataset.count);
+    if (!first || calm) { el.textContent = inr(to); return; }
+    const t0 = performance.now();
+    const step = (now: number) => { const k = Math.min(1, (now - t0) / 1300); el.textContent = inr(to * (1 - Math.pow(1 - k, 4))); if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  });
+  const arcs = root.querySelectorAll<SVGCircleElement>('.nx-arc');
+  if (!first || calm) arcs.forEach((a) => { a.style.transition = 'none'; a.setAttribute('stroke-dasharray', a.dataset.full!); });
+  else setTimeout(() => arcs.forEach((a) => a.setAttribute('stroke-dasharray', a.dataset.full!)), 80);
+  const cards = root.querySelectorAll<HTMLElement>('.nx-grid .panel, .nx-more .panel');
+  if (!first || calm) cards.forEach((c) => c.classList.add('in'));
+  else {
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: 0.08 });
+    cards.forEach((c, i) => { c.style.transitionDelay = `${(i % 2) * 0.08}s`; io.observe(c); });
+  }
+  if (matchMedia('(hover: hover) and (pointer: fine)').matches && !calm) cards.forEach((c) => {
+    c.addEventListener('pointermove', (e) => {
+      const r = c.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      c.classList.add('tilt');
+      c.style.transitionDelay = '0s';
+      c.style.setProperty('--ry', `${((x - 0.5) * 3).toFixed(2)}deg`);
+      c.style.setProperty('--rx', `${((0.5 - y) * 3).toFixed(2)}deg`);
+      c.style.setProperty('--gx', `${x * 100}%`);
+      c.style.setProperty('--gy', `${y * 100}%`);
+    });
+    c.addEventListener('pointerleave', () => { c.classList.remove('tilt'); c.style.setProperty('--rx', '0deg'); c.style.setProperty('--ry', '0deg'); });
+  });
+}
+
 export function renderDashboard(root: HTMLElement) {
   const { state, filters } = app;
   if (!state.txns.length) {
@@ -483,7 +613,39 @@ export function renderDashboard(root: HTMLElement) {
     { kind: 'income' as Kind, label: 'Credits in statements', value: s.actual.credits, note: 'Your income entry is used instead' },
   ].filter((m) => m.value > 0);
 
-  root.innerHTML = `
+  const asOf = whole.reduce((a, t) => (t.date > a ? t.date : a), '');
+  const banners = `
+    ${review.length ? `<a class="banner" href="#txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
+    ${unpaired.length ? `<button class="banner" data-pairs style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${unpaired.length}</strong> possible self transfer${unpaired.length > 1 ? 's' : ''} between your accounts ${unpaired.length > 1 ? 'aren’t' : 'isn’t'} marked</span><span>Review ›</span></button>` : ''}
+    ${alerts.length ? `<button class="banner alert-banner" data-alerts style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${alerts.length}</strong> unusual spend${alerts.length > 1 ? 's' : ''} in ${esc(monthLabel(alertMonth))}: ${esc(alerts[0].text)}${alerts.length > 1 ? ` and ${alerts.length - 1} more` : ''}</span><span>Review ›</span></button>` : ''}`;
+  const notCounted = section('Not counted as spend', movements.length ? `<ul class="movements">${movements.map((m) => `
+        <li><a href="#txns" data-kind="${'filter' in m ? m.filter : m.kind}"><span class="dot" style="background:${kindVar(m.kind)}"></span>
+          <span class="grow"><span class="mv-label">${esc(m.label)}</span><span class="tiny">${esc(m.note)}</span></span>
+          <span class="num">${inr(m.value)}</span></a></li>`).join('')}</ul>` : '<p class="muted small">Nothing here.</p>');
+  const byType = section('Investments by type', invCats.length ? `<table class="simple data">
+        <thead><tr><th>Type</th><th class="r">Net invested</th></tr></thead>
+        <tbody>${invCats.map((c) => `<tr><td><a href="#txns" data-kind="investment" data-category="${esc(c.category)}">${esc(c.category)}</a></td><td class="num r">${signed(c.total)}</td></tr>`).join('')}</tbody>
+      </table>
+      <p class="tiny" style="margin:8px 0 0">Negative means more was redeemed than invested.</p>` : '<p class="muted small">No investments here.</p>',
+    { action: scoped.some((t) => t.kind === 'investment') ? '<button class="btn small-btn" data-ledger-copy title="Copy every month\'s investment totals to paste into your 16-Year Ledger">Copy for Ledger</button>' : '' });
+  const isNew = getLook() === 'new';
+  const rec = isNew ? recurringPanel(whole, true) : '';
+  const subs = isNew ? subscriptionsPanel(whole) : '';
+
+  if (isNew) root.innerHTML = `
+    ${heroHtml({ s, month, all, months, older, newer, count: txns.length, asOf })}
+    <div class="nx-banners">${banners}</div>
+    <div class="nx-grid">
+      <div class="nx-c7">${categoryPanel(spendCats, investedCats)}</div>
+      ${all ? '' : `<div class="nx-c5">${reviewPanel(month, scoped)}</div>`}
+      <div class="${all ? 'nx-c5' : 'nx-c7'}">${trendPanel(history, month, allMonths.length)}</div>
+      ${rec || subs ? `<div class="nx-c5">${rec || subs}</div>` : ''}
+      ${rec && subs ? `<div class="nx-c6">${subs}</div>` : ''}
+      <div class="${rec && subs ? 'nx-c6' : 'nx-c12'}">${section('Monthly history', historyTable(history), { action: rangeToggle() })}</div>
+    </div>
+    <details class="nx-more"><summary>＋ More for ${esc(all ? 'all time' : monthLabel(month))}<span>Month at a glance · Tags · Not counted · Investments by type</span></summary>
+      <div class="grid-2">${glancePanel(s, txns, prev, spendCats)}${tagsPanel(txns, all)}${notCounted}${byType}</div></details>`;
+  else root.innerHTML = `
     <div class="page-head">
       <div><h1>Overview</h1><p class="page-sub">${txns.length} transaction${txns.length === 1 ? '' : 's'} ${all ? `across ${months.length} month${months.length === 1 ? '' : 's'}` : `in ${esc(monthLabel(month))}`}</p></div>
       <button class="btn primary" data-add>+ Add transaction</button>
@@ -501,11 +663,7 @@ export function renderDashboard(root: HTMLElement) {
       ${accountSelect()}
     </div>
 
-    ${review.length ? `<a class="banner" href="#txns" data-kind="review"><span><strong>${review.length}</strong> transaction${review.length > 1 ? 's' : ''} need${review.length > 1 ? '' : 's'} a category</span><span>Review ›</span></a>` : ''}
-
-    ${unpaired.length ? `<button class="banner" data-pairs style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${unpaired.length}</strong> possible self transfer${unpaired.length > 1 ? 's' : ''} between your accounts ${unpaired.length > 1 ? 'aren’t' : 'isn’t'} marked</span><span>Review ›</span></button>` : ''}
-
-    ${alerts.length ? `<button class="banner alert-banner" data-alerts style="width:100%;border:0;cursor:pointer;text-align:left"><span><strong>${alerts.length}</strong> unusual spend${alerts.length > 1 ? 's' : ''} in ${esc(monthLabel(alertMonth))}: ${esc(alerts[0].text)}${alerts.length > 1 ? ` and ${alerts.length - 1} more` : ''}</span><span>Review ›</span></button>` : ''}
+    ${banners}
 
     ${kpis(s)}
 
@@ -590,6 +748,23 @@ export function renderDashboard(root: HTMLElement) {
     try { localStorage.setItem('pie-mode', pieMode); } catch { /* remembered for this visit only */ }
     render();
   }));
+  root.querySelectorAll<HTMLElement>('[data-trend]').forEach((b) => b.addEventListener('click', () => {
+    trendMode = b.dataset.trend as TrendMode;
+    try { localStorage.setItem('et-trend', trendMode); } catch { /* remembered for this visit only */ }
+    render();
+  }));
+  root.querySelector('[data-nx-theme]')?.addEventListener('click', () => {
+    const dark = getTheme() === 'dark' || (getTheme() === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+    setTheme(dark ? 'light' : 'dark');
+    render();
+  });
+  root.querySelector('[data-nx-ask]')?.addEventListener('click', () => openDock('et'));
+  if (isNew) {
+    animateNew(root, `${month}|${filters.account}`);
+    const box = root.querySelector<HTMLElement>('#nx-flow');
+    if (box) void import('./jars3d').then(({ mountJars }) => { if (box.isConnected) mountJars(box, s.planSet ? s.plan.income : s.actual.spend + s.actual.invested, jarsOf(s)); })
+      .catch(() => box.classList.add('no3d'));
+  }
   root.querySelectorAll<HTMLElement>('[data-range]').forEach((b) => b.addEventListener('click', () => {
     filters.range = Number(b.dataset.range);
     render();
