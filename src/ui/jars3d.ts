@@ -29,7 +29,7 @@ export function mountJars(box: HTMLElement, source: number, jars: Jar[]): void {
   R.setPixelRatio(Math.min(devicePixelRatio, 2));
   // the app's palette: the source glows in its accent, the jars stand on its night colour
   const cssv = (n: string, f: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
-  const GLOW = cssv('--nx-gold', '#ff8a5c'), GLOW2 = cssv('--nx-gold-2', '#ffc58a'), NIGHT = cssv('--nx-night-2', '#4a1842');
+  const GLOW = cssv('--nx-gold', '#f59e0b'), GLOW2 = cssv('--nx-gold-2', '#fcd34d'), NIGHT = cssv('--nx-night-2', '#2a2e38');
   const scene = new THREE.Scene();
   const cam = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
   const world = new THREE.Group();
