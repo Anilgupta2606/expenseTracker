@@ -451,7 +451,10 @@ function heroHtml({ s, month, all, months, older, newer, count, asOf }: HeroData
   const gauge = (label: string, actual: number, expected: number, color: string, over: number, good: boolean) => `<div class="nx-mg">${ring(actual, expected, color)}<div>
       <div class="t">${label}</div><div class="v num"><span data-count="${Math.round(actual)}">${inr(0)}</span>${expected > 0 ? ` <span class="of">/ ${inr(expected)}</span>` : ''}</div>
       ${expected > 0 ? `<span class="pill ${good ? 'ok' : 'bad'}">${good ? '✓' : '▲'} ${inr(Math.abs(over))} ${label.startsWith('Spending') ? (good ? 'under' : 'over') : (good ? 'ahead' : 'short')}</span>` : '<span class="tiny">no target</span>'}</div></div>`;
-  return `<header class="nx-hero"><div class="nx-hin">
+  // embers drifting up through the hero (CSS only; still for reduced motion)
+  const embers = Array.from({ length: 16 }, (_, i) => { const r = (k: number) => ((i * 9301 + k * 49297) % 233280) / 233280;
+    return `<span style="--x:${(r(1) * 100).toFixed(1)}%;--s:${(3 + r(2) * 6).toFixed(1)}px;--d:${(7 + r(3) * 8).toFixed(1)}s;--dl:${(-r(4) * 14).toFixed(1)}s;--dx:${((r(5) - 0.5) * 120).toFixed(0)}px"></span>`; }).join('');
+  return `<header class="nx-hero"><div class="nx-embers" aria-hidden="true">${embers}</div><div class="nx-hin">
     <div class="nx-top"><h1>Overview</h1>
       <div class="month-switch" role="group" aria-label="Month">
         <button class="icon-btn" data-goto="${older ?? ''}" ${older ? '' : 'disabled'} aria-label="Previous month">‹</button>

@@ -27,12 +27,15 @@ export function mountJars(box: HTMLElement, source: number, jars: Jar[]): void {
   const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const small = matchMedia('(max-width: 900px)').matches;
   R.setPixelRatio(Math.min(devicePixelRatio, 2));
+  // the app's palette: the source glows in its accent, the jars stand on its night colour
+  const cssv = (n: string, f: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || f;
+  const GLOW = cssv('--nx-gold', '#ff8a5c'), GLOW2 = cssv('--nx-gold-2', '#ffc58a'), NIGHT = cssv('--nx-night-2', '#4a1842');
   const scene = new THREE.Scene();
   const cam = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
   const world = new THREE.Group();
   scene.add(world);
-  scene.add(new THREE.AmbientLight(0x30504a, 1.4));
-  const key = new THREE.PointLight(0xffe2a8, 40, 30, 1.5);
+  scene.add(new THREE.AmbientLight(new THREE.Color(NIGHT).lerp(new THREE.Color(0xffffff), 0.25), 1.4));
+  const key = new THREE.PointLight(GLOW2, 40, 30, 1.5);
   key.position.set(0, 4, 3);
   scene.add(key);
 
@@ -57,10 +60,10 @@ export function mountJars(box: HTMLElement, source: number, jars: Jar[]): void {
 
   // the source: a small gold sun of income
   const SRC = new THREE.Vector3(0, 2.75, 0);
-  const src = new THREE.Mesh(new THREE.SphereGeometry(0.26, 32, 16), new THREE.MeshBasicMaterial({ color: 0xfff0c8 }));
+  const src = new THREE.Mesh(new THREE.SphereGeometry(0.26, 32, 16), new THREE.MeshBasicMaterial({ color: new THREE.Color(GLOW2).lerp(new THREE.Color(0xffffff), 0.6) }));
   src.position.copy(SRC);
   world.add(src);
-  const srcGlow = glow(0xe2b04a, 2.4, 0.9);
+  const srcGlow = glow(GLOW, 2.4, 0.9);
   srcGlow.position.copy(SRC);
   world.add(srcGlow);
 
@@ -82,7 +85,7 @@ export function mountJars(box: HTMLElement, source: number, jars: Jar[]): void {
     rim.rotation.x = Math.PI / 2;
     rim.position.y = BASE + H;
     g.add(rim);
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(RAD + 0.14, RAD + 0.2, 0.12, 48), new THREE.MeshStandardMaterial({ color: 0x0f2d25, metalness: 0.6, roughness: 0.35 }));
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(RAD + 0.14, RAD + 0.2, 0.12, 48), new THREE.MeshStandardMaterial({ color: NIGHT, metalness: 0.6, roughness: 0.35 }));
     base.position.y = BASE - 0.06;
     g.add(base);
     const liquid = new THREE.Mesh(new THREE.CylinderGeometry(RAD, RAD, 1, 48), new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.55, transparent: true, opacity: 0.88, roughness: 0.25, metalness: 0.1 }));
@@ -115,7 +118,7 @@ export function mountJars(box: HTMLElement, source: number, jars: Jar[]): void {
   const pts = new THREE.Points(pg, new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, vertexColors: true, uniforms: { uPR: { value: R.getPixelRatio() } },
     vertexShader: 'attribute float aSize; uniform float uPR; varying vec3 vc; void main(){ vc = color; vec4 mv = modelViewMatrix * vec4(position, 1.0); gl_Position = projectionMatrix * mv; gl_PointSize = aSize * uPR * 34.0 / -mv.z; }',
-    fragmentShader: 'varying vec3 vc; void main(){ float d = length(gl_PointCoord - .5); float a = smoothstep(.5, 0.0, d); gl_FragColor = vec4(mix(vec3(1.0,.86,.5), vc, .65) * a * a * 1.6, 1.0); }',
+    fragmentShader: 'varying vec3 vc; void main(){ float d = length(gl_PointCoord - .5); float a = smoothstep(.5, 0.0, d); gl_FragColor = vec4(mix(vec3(1.0,.9,.8), vc, .7) * a * a * 1.6, 1.0); }',
   }));
   pts.frustumCulled = false;
   world.add(pts);
