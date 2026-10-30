@@ -423,7 +423,7 @@ let monthDefaulted = false;
 
 type TrendMode = 'spent' | 'invested' | 'both';
 let trendMode: TrendMode = (() => {
-  try { const v = localStorage.getItem('et-trend'); return v === 'invested' || v === 'both' ? v : 'spent'; } catch { return 'spent'; }
+  try { const v = localStorage.getItem('et-trend'); return v === 'invested' || v === 'spent' ? v : 'both'; } catch { return 'both'; }
 })();
 
 const css = (name: string, fallback: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -499,14 +499,16 @@ function trendPanel(history: MonthSummary[], month: string, allCount: number): s
   const points = (pick: (r: MonthSummary) => [number, number]): MonthPoint[] =>
     history.map((r) => { const [actual, expected] = pick(r); return { month: r.month, actual, expected, planSet: r.planSet }; });
   const chart = !history.length ? '<p class="muted small">No data yet.</p>'
-    : trendMode === 'both' ? trendChart(history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })), month, true)
+    // the card is half the page wide: the narrow drawing there, the wide one only when the card gets wide (as in Classic)
+    : trendMode === 'both' ? ((pts) => `<div class="trend-narrow">${trendChart(pts, month)}</div><div class="trend-wide">${trendChart(pts, month, true)}</div>`)(
+        history.map((r) => ({ month: r.month, spend: Math.max(r.actual.spend, 0), invest: r.actual.invested })))
     : trendMode === 'invested' ? monthlyChart(points((r) => [r.actual.invested, r.plan.expectedInvestment]), month, kindVar('investment'), 'Invested')
     : monthlyChart(points((r) => [Math.max(r.actual.spend, 0), r.plan.expectedSpend]), month, kindVar('spend'), 'Spent');
   const tabs = `<span class="seg-toggle" role="group" aria-label="Chart">${([['spent', 'Spent'], ['invested', 'Invested'], ['both', 'Both']] as [TrendMode, string][])
     .map(([v, l]) => `<button data-trend="${v}" class="${trendMode === v ? 'on' : ''}" aria-pressed="${trendMode === v}">${l}</button>`).join('')}</span>`;
   const note = trendMode === 'both' ? 'Spent and invested each month. Hover a month for its numbers; tap to open it.'
     : `${trendMode === 'spent' ? 'Spending against your budget' : 'Investing against your target'} each month. Tap a month to open it.`;
-  return section(`${history.length} month${history.length === 1 ? '' : 's'}`, chart, { note: `${note} Showing ${history.length} of ${allCount}.`, action: `<span class="nx-acts">${tabs}${rangeToggle()}</span>` });
+  return section('Spend and investment trend', chart, { note: `${note} Showing ${history.length} of ${allCount}.`, action: `<span class="nx-acts">${tabs}${rangeToggle()}</span>` });
 }
 
 /** Numbers count up, rings sweep, cards rise in as they come into view and lean a little towards the pointer. */
